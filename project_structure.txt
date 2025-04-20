@@ -1,0 +1,191 @@
+# 🔁 PHASE OVERVIEW
+
+**Pipeline 3 includes:**
+
+1. **Model Layer**: Vietnamese LLM + LoRA fine-tuning  
+2. **RAG Layer**: LangChain + FAISS + LlamaIndex  
+3. **Multimodal Layer**: Support image, voice, file I/O  
+4. **Agentic Layer**: LangGraph or ReAct Agents in Vietnamese  
+5. **Memory Layer**: mem0-style memory + FAISS sync  
+6. **Personalization Layer**: Profile, history, preferences  
+7. **Deployment Layer**: LangServe + local app/server  
+8. **Evaluation Layer**: Metrics (hallucination, coherence…)
+
+---
+
+## ✅ PHASE 1: MODEL LAYER — Vietnamese LLM + LoRA
+
+### 🎯 Purpose:
+Fine-tune a Vietnamese LLM with instruction-following capability (QA, summarization, etc.).
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| Base LLM | `vinallama-7b` / `PhởGPT` / `PhoLLM` | Best Vietnamese open-source models |
+| Fine-tuning | `LoRA` (via `QLoRA` or `PEFT`) | Efficient for consumer GPUs |
+| Trainer | `transformers + trl` or `Axolotl` | Use `Axolotl` if you want simplicity |
+| Data Format | OpenChat format / ShareGPT JSON | Works well with SFT + LoRA |
+| Hardware | 1x RTX 3090 / A100 / Colab Pro | RAM ~24GB minimum for 7B LoRA |
+
+### ✅ Recommended Stack:
+
+- **Model**: `vinallama-7b-chat` or `PhởGPT 7B`
+- **Trainer**: `Axolotl` (very clean config + LoRA built-in)
+- **LoRA library**: `PEFT`
+- **Quantization**: `QLoRA` (if using low VRAM)
+- **Dataset**: Vietnamese Q&A dataset + your custom instructions
+
+---
+
+## ✅ PHASE 2: RAG LAYER — Retrieval-Augmented Generation
+
+### 🎯 Purpose:
+Connect your chatbot with external knowledge (documents, websites, PDFs).
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| Vector DB | `FAISS` (local), `Weaviate`, or `Chroma` | FAISS is fast + lightweight |
+| Retriever & RAG Logic | `LangChain` or `LlamaIndex` | LangChain = more control, LlamaIndex = faster dev |
+| Embeddings | `bge-base-vi`, `vinai/phobert`, or multilingual models | Must support Vietnamese |
+| File loader | LangChain’s PDF/CSV/Web loaders | You can also write custom loaders |
+
+### ✅ Recommended Stack:
+
+- **Vector DB**: FAISS (simple & fast)
+- **RAG Engine**: LangChain for logic + LlamaIndex for document ingestion
+- **Embeddings**: `bge-small-en-vi` or `bge-base-vi`
+- **File support**: PDF, .docx, .txt using LangChain’s loaders
+
+---
+
+## ✅ PHASE 3: MULTIMODAL LAYER — Image + Voice + Files
+
+### 🎯 Purpose:
+Support file upload, image input, voice-to-text (STT) and text-to-speech (TTS).
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| Image input | OpenAI Vision / BLIP / LLaVA | Use BLIP or LLaVA if no OpenAI |
+| File Upload | LangChain document loader | Works well for PDFs, text, Word |
+| STT (Speech to Text) | `whisper` or `faster-whisper` | Good Vietnamese support |
+| TTS (Text to Speech) | `Coqui`, `VietTTS`, `ElevenLabs` | VietTTS is free and good |
+| Interface | Streamlit / Gradio / Local app | For multimodal testing |
+
+### ✅ Recommended Stack:
+
+- **STT**: `faster-whisper` (fast + accurate)
+- **TTS**: `VietTTS` or `Coqui`
+- **Image input**: `BLIP-2` (local) or `LLaVA`
+- **File I/O**: LangChain document loaders
+
+---
+
+## ✅ PHASE 4: AGENTIC LAYER — Tool-Using, Reasoning Agents
+
+### 🎯 Purpose:
+Enable your bot to reason, plan, and use tools (e.g., search, calculator, file upload).
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| Agent Engine | `LangGraph`, `ReAct`, `LangChain AgentExecutor` | LangGraph = flexible graph, ReAct = easier |
+| Tools | Search, Calculator, RAG Tool | Create your own tools easily |
+| Prompting | Vietnamese ReAct-style | You’ll write step-by-step prompts in Vietnamese |
+
+### ✅ Recommended Stack:
+
+- **Framework**: `LangGraph` (modular + composable)
+- **Prompting**: ReAct in Vietnamese (e.g., `Suy nghĩ -> Hành động -> Quan sát`)
+- **Tools**: RAG Tool, Calculator Tool, Search Tool
+
+---
+
+## ✅ PHASE 5: MEMORY SYSTEM — Long-term + Conversational
+
+### 🎯 Purpose:
+Enable the bot to “remember” users, facts, past conversations.
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| Memory lib | `mem0`, `LangChain`’s Memory, or custom | `mem0` is simple and powerful |
+| Memory storage | `FAISS`, `JSON`, or DB | Store memory as vector + structured profile |
+| Sync with RAG | Combine memory with FAISS | Inject memory into RAG context |
+
+### ✅ Recommended Stack:
+
+- **Memory Engine**: `mem0`-style vector memory
+- **Storage**: JSON + FAISS hybrid
+- **Sync**: Add memory vector store to LangChain retriever chain
+
+---
+
+## ✅ PHASE 6: PERSONALIZATION — Profiles, Preferences
+
+### 🎯 Purpose:
+Adapt to user identity (name, preferences, goals, history).
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| Profile store | JSON, SQLite, or Redis | Store key-value profile data |
+| Preference learning | Manual + Auto (e.g. "likes X") | Can infer from past chats |
+| Memory injection | Append to prompt or context | Dynamically add profile in RAG prompt |
+
+### ✅ Recommended Stack:
+
+- **Profile Store**: `JSON` or SQLite
+- **Personalization strategy**: Track user name, style, history
+- **Integration**: Inject personalization into prompt
+
+---
+
+## ✅ PHASE 7: DEPLOYMENT — Serve the Bot
+
+### 🎯 Purpose:
+Deploy your chatbot with API or UI frontend.
+
+### 🛠 Tools:
+
+| Task | Tool | Notes |
+|------|------|-------|
+| API backend | `LangServe` or FastAPI | LangServe works seamlessly with LangChain |
+| UI | Streamlit, Gradio, Web frontend | Streamlit for dev, React for prod |
+| Server | Local, Docker, or Hugging Face Spaces | Start local, go cloud later |
+
+### ✅ Recommended Stack:
+
+- **Backend**: `LangServe`
+- **UI**: Streamlit (then migrate to React)
+- **Host**: Local + Hugging Face Spaces
+
+---
+
+## ✅ PHASE 8: EVALUATION — Test & Improve
+
+### 🎯 Purpose:
+Evaluate hallucination, relevance, and performance.
+
+### 🛠 Tools:
+
+| Metric | Tool | Notes |
+|--------|------|-------|
+| Hallucination check | Manual + embeddings | Compare response with source context |
+| Embedding similarity | cosine_score(question, answer) | Auto-check if relevant |
+| Human scoring | Simple rating system | Ask user for 1–5 stars |
+
+### ✅ Recommended Stack:
+
+- **Metrics**: Hallucination % + Embedding Similarity + User Score
+- **Tracking**: Save Q&A pairs + scores for training
+- **Use**: Improve model or memory from evaluation logs
+
+---
