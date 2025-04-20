@@ -1,0 +1,28 @@
+{
+  "embedding": {
+    "model_name": "bge-small-en-vi",
+    "cache_dir": "/Users/nguyen/Documents/Work/agentic/models/embeddings",
+    "dimension": 384,
+    "normalize_embeddings": true
+  },
+  "vector_store": {
+    "index_type": "faiss",
+    "index_path": "/Users/nguyen/Documents/Work/agentic/data/indices",
+    "similarity_top_k": 5
+  },
+  "document_processing": {
+    "chunk_size": 512,
+    "chunk_overlap": 50,
+    "documents_dir": "/Users/nguyen/Documents/Work/agentic/data/documents"
+  },
+  "retrieval": {
+    "use_hybrid_search": true,
+    "rerank_results": true,
+    "max_documents": 10
+  },
+  "vietnamese": {
+    "use_vietnamese_tokenizer": true,
+    "remove_vietnamese_stopwords": true,
+    "normalize_unicode": true
+  }
+}

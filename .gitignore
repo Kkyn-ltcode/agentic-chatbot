@@ -23,6 +23,7 @@ var/
 # Model files and cache
 models/cache/
 models/downloaded_model/
+models/embeddings/*
 models/*-lora*/
 *.pt
 *.bin
@@ -31,6 +32,8 @@ models/*-lora*/
 # Data
 data/raw/
 data/processed/*.json
+data/documents/*
+data/indices/*
 
 # Logs
 logs/

@@ -9,6 +9,13 @@ import logging
 import os
 import sys
 from typing import Dict, List, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+try:
+    load_dotenv()
+except ImportError:
+    pass
 
 import torch
 from datasets import load_dataset
@@ -115,7 +122,7 @@ def parse_args():
     parser.add_argument(
         "--max_seq_length",
         type=int,
-        default=1024,
+        default=258,
         help="Maximum sequence length",
     )
     
@@ -171,6 +178,76 @@ def parse_args():
         help="Directory to cache the downloaded model",
     )
     
+    parser.add_argument(
+        "--use_wandb",
+        action="store_true",
+        help="Use Weights & Biases for experiment tracking",
+    )
+    
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="vietnamese-llm-finetuning",
+        help="Weights & Biases project name",
+    )
+    
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+        default=None,
+        help="Weights & Biases run name",
+    )
+    
+    parser.add_argument(
+        "--lr_scheduler_type",
+        type=str,
+        default="cosine",
+        choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
+        help="Learning rate scheduler type",
+    )
+    
+    parser.add_argument(
+        "--warmup_steps",
+        type=int,
+        default=100,
+        help="Number of warmup steps for the learning rate scheduler",
+    )
+    
+    parser.add_argument(
+        "--early_stopping_patience",
+        type=int,
+        default=3,
+        help="Number of evaluation calls with no improvement after which training will be stopped",
+    )
+    
+    parser.add_argument(
+        "--gradient_checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to save memory",
+    )
+    
+    parser.add_argument(
+        "--mixed_precision",
+        type=str,
+        default="no",
+        choices=["no", "fp16", "bf16"],
+        help="Use mixed precision training (only enable if your device supports it)",
+    )
+    
+    parser.add_argument(
+        "--save_total_limit",
+        type=int,
+        default=3,
+        help="Limit the total amount of checkpoints. Deletes the older checkpoints.",
+    )
+    
+    parser.add_argument(
+        "--validation_split_percentage",
+        type=int,
+        default=None,
+        help="If set, will use this percentage of training data as validation if no validation file is provided",
+    )
+    
     return parser.parse_args()
 
 
@@ -193,6 +270,8 @@ def prepare_datasets(train_path, eval_path, tokenizer, max_length):
         for conversation in examples["messages"]:
             # Format the conversation
             formatted_text = ""
+            assistant_positions = []  # Track where assistant responses begin
+            
             for message in conversation:
                 role = message["role"]
                 content = message["content"]
@@ -202,6 +281,8 @@ def prepare_datasets(train_path, eval_path, tokenizer, max_length):
                 elif role == "user":
                     formatted_text += f"<|user|>\n{content}\n"
                 elif role == "assistant":
+                    # Mark the position where assistant response begins
+                    assistant_positions.append(len(formatted_text))
                     formatted_text += f"<|assistant|>\n{content}\n"
             
             # Tokenize
@@ -209,13 +290,42 @@ def prepare_datasets(train_path, eval_path, tokenizer, max_length):
                 formatted_text,
                 truncation=True,
                 max_length=max_length,
-                padding="max_length",
+                padding=False,
                 return_tensors="pt",
             )
             
-            all_input_ids.append(tokenized["input_ids"][0])
-            all_attention_mask.append(tokenized["attention_mask"][0])
-            all_labels.append(tokenized["input_ids"][0].clone())
+            # Handle padding manually to ensure consistent sizes
+            input_ids = tokenized["input_ids"][0]
+            attention_mask = tokenized["attention_mask"][0]
+            
+            # Create labels: -100 for tokens we don't want to predict (system/user messages)
+            # and actual token IDs for tokens we want to predict (assistant responses)
+            labels = torch.ones_like(input_ids) * -100  # Initialize all as -100 (ignored in loss)
+            
+            # Find token positions for assistant responses
+            for pos in assistant_positions:
+                # Convert character position to token position (approximate)
+                token_pos = tokenizer(formatted_text[:pos], return_tensors="pt")["input_ids"].shape[1]
+                if token_pos < len(labels):
+                    # Set all tokens after this position to their actual values (for prediction)
+                    labels[token_pos:] = input_ids[token_pos:]
+            
+            # Pad or truncate to exactly max_length
+            if len(input_ids) < max_length:
+                # Pad
+                padding_length = max_length - len(input_ids)
+                input_ids = torch.cat([input_ids, torch.ones(padding_length, dtype=torch.long) * tokenizer.pad_token_id])
+                attention_mask = torch.cat([attention_mask, torch.zeros(padding_length, dtype=torch.long)])
+                labels = torch.cat([labels, torch.ones(padding_length, dtype=torch.long) * -100])  # Pad labels with -100
+            elif len(input_ids) > max_length:
+                # Truncate
+                input_ids = input_ids[:max_length]
+                attention_mask = attention_mask[:max_length]
+                labels = labels[:max_length]
+            
+            all_input_ids.append(input_ids)
+            all_attention_mask.append(attention_mask)
+            all_labels.append(labels)
         
         return {
             "input_ids": all_input_ids,
@@ -250,7 +360,7 @@ def main():
     if args.model_name_or_path == "vinai/PhoGPT-7B5" and args.model_size != "large":
         if args.model_size == "small":
             # Smaller Vietnamese models
-            model_name = "NlpHUST/gpt-neo-1.3B-vietnamese"  # or "NlpHUST/gpt-neo-1.3B-vietnamese"
+            model_name = "vinai/phobert-base"  # or "NlpHUST/gpt-neo-1.3B-vietnamese"
             logger.info(f"Using smaller model: {model_name}")
             args.model_name_or_path = model_name
         elif args.model_size == "medium":
@@ -330,17 +440,50 @@ def main():
     
     # Configure LoRA
     logger.info("Configuring LoRA")
+    
+    # Determine target modules based on model architecture
+    target_modules = []
+    model_type = model.config.model_type if hasattr(model.config, "model_type") else ""
+    
+    if "gpt" in model_type.lower() or "phogpt" in args.model_name_or_path.lower():
+        # For GPT-like models
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+        logger.info(f"Using target modules for GPT architecture: {target_modules}")
+    elif "bert" in model_type.lower() or "phobert" in args.model_name_or_path.lower():
+        # For BERT-like models
+        target_modules = ["query", "key", "value", "output.dense"]
+        logger.info(f"Using target modules for BERT architecture: {target_modules}")
+    else:
+        # Fallback to a more general approach
+        # Try to find attention modules by inspecting model
+        for name, _ in model.named_modules():
+            if any(keyword in name for keyword in ["attention", "self", "query", "key", "value"]):
+                if name.endswith(("query", "key", "value", "dense")):
+                    target_modules.append(name)
+        
+        if not target_modules:
+            # If no modules found, use a default set that works for many models
+            target_modules = ["query", "key", "value", "dense"]
+        
+        logger.info(f"Using automatically detected target modules: {target_modules}")
+    
     lora_config = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         bias="none",
-        task_type=TaskType.CAUSAL_LM,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],  # Fewer target modules for M1
+        task_type=TaskType.CAUSAL_LM if "gpt" in model_type.lower() else TaskType.SEQ_CLS,
+        target_modules=target_modules,
     )
     
     # Get PEFT model
     model = get_peft_model(model, lora_config)
+    
+    # Make sure trainable parameters require gradients
+    for param in model.parameters():
+        if param.requires_grad:
+            param.requires_grad_(True)
+    
     model.print_trainable_parameters()
     
     # Prepare datasets
@@ -372,7 +515,26 @@ def main():
         elif last_checkpoint is not None:
             logger.info(f"Checkpoint detected, resuming training from {last_checkpoint}")
     
-    # Training arguments
+    # Setup wandb if requested
+    if args.use_wandb:
+        try:
+            import wandb
+            wandb_available = True
+            
+            # Initialize wandb
+            wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_run_name,
+                config=vars(args),
+            )
+            logger.info("Weights & Biases initialized successfully")
+        except ImportError:
+            wandb_available = False
+            logger.warning("Weights & Biases not available. Install with: pip install wandb")
+    else:
+        wandb_available = False
+    
+    # Training arguments with improved settings
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -382,27 +544,48 @@ def main():
         num_train_epochs=args.num_train_epochs,
         weight_decay=0.01,
         save_strategy="epoch",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",  # Changed from eval_strategy to evaluation_strategy
         logging_strategy="steps",
         logging_steps=10,
         load_best_model_at_end=True,
         push_to_hub=False,
-        fp16=False,  # Disable fp16 for M1
-        bf16=False,  # Disable bf16 for M1
-        optim="adamw_torch",  # Use standard optimizer for M1
-        report_to="none",  # Disable reporting to save memory
+        fp16=args.mixed_precision == "fp16",
+        bf16=args.mixed_precision == "bf16",
+        optim="adamw_torch",
+        report_to="wandb" if wandb_available else "none",
         ddp_find_unused_parameters=False,
-        use_mps_device=torch.backends.mps.is_available(),  # Enable MPS for M1
+        lr_scheduler_type=args.lr_scheduler_type,
+        warmup_steps=args.warmup_steps,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        save_total_limit=args.save_total_limit,
+        gradient_checkpointing=args.gradient_checkpointing,
+        # Add a specific run_name to avoid the warning
+        run_name=args.wandb_run_name or f"vietnamese-llm-{args.model_size}-{os.path.basename(args.output_dir)}",
     )
     
-    # Initialize Trainer
+    # Add early stopping callback
+    callbacks = []
+    if args.early_stopping_patience > 0:
+        from transformers.trainer_callback import EarlyStoppingCallback
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=args.early_stopping_patience
+            )
+        )
+    
+    # Initialize Trainer with callbacks and label_names
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=tokenized_datasets["train"],
         eval_dataset=tokenized_datasets["validation"],
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
+        callbacks=callbacks,
+        # Add label_names to fix the warning
+        compute_metrics=None,
+        preprocess_logits_for_metrics=None,
     )
     
     # Start training
@@ -418,6 +601,10 @@ def main():
     trainer.log_metrics("train", metrics)
     trainer.save_metrics("train", metrics)
     trainer.save_state()
+    
+    # Clean up wandb
+    if wandb_available:
+        wandb.finish()
     
     logger.info("Training completed")
 
