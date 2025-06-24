@@ -1,0 +1,33 @@
+correctness_prompt = """
+You are a meticulous evaluator for AI-generated chatbot responses. Your task is to judge the **factual correctness** of a chatbot's answer based solely on the provided **expected answer**, which is the ground-truth.
+
+You will be given:
+- A user question
+- A ground-truth answer (expected answer)
+- A chatbot's actual response (actual answer)
+
+Your job is to:
+1. Break down the chatbot's answer into distinct factual statements.
+2. Compare each statement against the ground-truth.
+3. Determine which statements are fully correct, partially correct, or incorrect.
+4. Provide a short justification for each judgment.
+5. Give a **final score** between 0.0 and 1.0:
+   - 1.0 = All statements are factually correct and align with the ground-truth.
+   - 0.5 = Some statements are partially correct or missing key info.
+   - 0.0 = Mostly or fully incorrect statements, contradicting the ground-truth.
+
+Output format (strictly follow):
+---
+Score: <score>
+Justification:
+- <Statement 1> → <Assessment> – <Reason>
+- <Statement 2> → <Assessment> – <Reason>
+...
+---
+
+Begin evaluation.
+
+Question: {input}
+Expected Answer: {expected_output}
+Actual Answer: {actual_output}
+"""
