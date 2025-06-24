@@ -36,3 +36,30 @@ correctness_metric = GEval(
     """
 )
 
+from deepeval.metrics import GEval
+
+answer_relevance_metric = GEval(
+    name="Answer Relevance",
+    evaluation_type="criteria",
+    model="gpt-4",  # or your own local judge model
+    criteria=(
+        "Evaluate the relevance of the chatbot's response to the user's question. "
+        "An answer is relevant if it directly addresses the user's query, stays on-topic, "
+        "and avoids unrelated or extraneous information. Do not judge factual accuracy. "
+        "Focus only on how well the answer aligns with what the user asked."
+    ),
+    evaluation_steps=[
+        "Read the question and understand what information the user is asking for.",
+        "Read the chatbot's answer and identify its main points or statements.",
+        "For each point, decide whether it is directly relevant to the question.",
+        "Ignore whether the answer is correct — focus only on topicality and focus.",
+        "Assign a score based on the rubric, and explain your reasoning."
+    ],
+    rubric="""
+    1.0 - The answer is completely relevant, focused, and directly addresses all parts of the question.
+    0.7 - Mostly relevant with slight off-topic content or missing minor parts of the question.
+    0.5 - Partially relevant; the core of the question is only loosely addressed.
+    0.2 - Mostly irrelevant or off-topic, but has one or two related points.
+    0.0 - Completely irrelevant; does not address the question at all.
+    """
+)
