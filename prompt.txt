@@ -13,3 +13,26 @@ correctness_metric = GEval(
         "Explain why you assigned this score."
     ]
 )
+
+from deepeval.metrics import GEval
+
+correctness_metric = GEval(
+    name="Correctness",
+    criteria="Evaluate the factual correctness of the chatbot's answer based on the expected answer.",
+    evaluation_type="criteria",
+    model="gpt-4",
+    evaluation_steps=[
+        "Break the actual answer into factual statements.",
+        "Compare each with the expected answer and mark as correct, partially correct, or incorrect.",
+        "Aggregate your judgment into a final score.",
+        "Explain your reasoning."
+    ],
+    rubric="""
+    1.0 - The response is entirely factually correct and aligns fully with the expected answer. No incorrect or misleading statements.
+    0.7 - The response is mostly correct but may have minor omissions or slightly imprecise information.
+    0.5 - The response is partially correct, mixing correct and incorrect or incomplete statements.
+    0.2 - The response contains mostly incorrect or unrelated statements.
+    0.0 - The response is completely incorrect or contradicts the ground truth.
+    """
+)
+
