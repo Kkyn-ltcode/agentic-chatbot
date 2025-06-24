@@ -1,0 +1,48 @@
+from llama_index.readers.docling import DoclingReader
+
+reader = DoclingReader(export_type=DoclingReader.ExportType.JSON)
+
+try:
+    docs = reader.load_data(file_path='report.pdf')
+except FileNotFoundError:
+    print("Error: report.pdf not found. Please ensure it's in the correct directory.")
+    exit()
+
+from llama_index.node_parser.docling import DoclingNodeParser
+from llama_index.core import VectorStoreIndex, Settings
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.llms.huggingface import HuggingFaceLLM
+from llama_index.llms.huggingface_api import HuggingFaceApiLLM
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Initialize LLM and Embedding Model
+HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+if HUGGINGFACEHUB_API_TOKEN is None:
+    raise ValueError("HUGGINGFACEHUB_API_TOKEN environment variable not set. Please set it to your Hugging Face API token.")
+
+llm = HuggingFaceApiLLM(api_key=HUGGINGFACEHUB_API_TOKEN, model="google/flan-t5-xl") # Example model
+embed_model = HuggingFaceEmbedding(model_name="all-mpnet-base-v2") # Example embedding model
+
+Settings.llm = llm
+Settings.embed_model = embed_model
+
+node_parser = DoclingNodeParser()
+
+index = VectorStoreIndex.from_documents(
+    documents=docs,
+    transformations=[node_parser],
+    show_progress=True
+)
+
+QUERY = "What is the report about?"  # Example query
+query_engine = index.as_query_engine()
+result = query_engine.query(QUERY)
+print(result)
+
+# Example of querying with specific parameters
+QUERY_PARAMS = {"temperature": 0.7, "top_p": 0.9}
+result_with_params = query_engine.query(QUERY, llm_kwargs=QUERY_PARAMS)
+print(result_with_params)
