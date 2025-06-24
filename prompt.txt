@@ -63,3 +63,34 @@ answer_relevance_metric = GEval(
     0.0 - Completely irrelevant; does not address the question at all.
     """
 )
+
+from deepeval.metrics import GEval
+
+FaithfulnessGEval = GEval(
+    name="Faithfulness",
+    model="gpt-4",  # Or your own judge LLM
+    evaluation_type="criteria",
+    criteria=(
+        "You are evaluating whether the chatbot's response is **faithful** to the expected answer. "
+        "A response is faithful if every piece of information in it is **directly grounded** in the expected answer. "
+        "If the chatbot introduces information that is not found in the expected answer — even if it's plausible or true — "
+        "it is considered a **hallucination** and reduces the faithfulness score. "
+        "Focus only on whether the answer strictly adheres to the content of the expected answer. "
+        "Do not judge style, fluency, or helpfulness. Only grounding."
+    ),
+    evaluation_steps=[
+        "Step 1: Break the actual output into clear factual or informative statements.",
+        "Step 2: For each statement, determine if it is fully supported, partially supported, or unsupported by the expected answer.",
+        "Step 3: Mark any hallucinated, invented, or overly speculative content.",
+        "Step 4: Explain each judgment with specific reference to the expected answer.",
+        "Step 5: Based on these findings, assign a final score between 0.0 and 1.0 using the rubric."
+    ],
+    rubric="""
+    1.0 — All content in the actual answer is directly grounded in the expected answer. No hallucination.
+    0.8 — One very minor unsupported detail or slight elaboration, but overall faithful.
+    0.6 — Mostly faithful, but a few unsupported or speculative additions.
+    0.4 — Several hallucinated or fabricated details that dilute the original meaning.
+    0.2 — Largely unfaithful with major hallucinations or incorrect inferences.
+    0.0 — Completely ungrounded; answer is fabricated or contradicts the expected answer.
+    """
+)
