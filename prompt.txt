@@ -2,17 +2,39 @@ from deepeval.metrics import GEval
 
 correctness_metric = GEval(
     name="Correctness",
-    criteria="Is the chatbot's response factually correct based on the ground-truth answer?",
     evaluation_type="criteria",
     model="gpt-4",
+    
+    criteria="""
+Evaluate the factual correctness of the chatbot's response compared to the expected answer.
+Your task is to judge whether the chatbot output conveys factually accurate and semantically equivalent information.
+Focus only on information that is verifiable from the expected answer.
+Ignore style, verbosity, or phrasing differences unless they change the meaning.
+""",
+
     evaluation_steps=[
-        "Break down the actual answer into individual factual statements.",
-        "Compare each statement with the expected answer.",
-        "Mark each statement as correct, partially correct, or incorrect, with reasoning.",
-        "Based on the overall correctness, assign a score between 0.0 and 1.0.",
-        "Explain why you assigned this score."
-    ]
+        "Identify all factual claims or key statements made in the chatbot's output.",
+        "Compare each claim against the expected answer.",
+        "Label each as one of: (1) Fully correct, (2) Partially correct, (3) Incorrect or unsupported.",
+        "Determine if any hallucinated (unsupported) or contradictory facts are present.",
+        "Summarize the overall factual alignment and assign a score based on the rubric.",
+        "Explain why the score was assigned, referencing specific claims."
+    ],
+
+    rubric="""
+Scoring Rubric for Factual Correctness:
+
+1.0 — Perfect factual alignment. All chatbot claims are fully supported by the expected answer. No incorrect or hallucinated facts.
+0.8 — Mostly correct. One minor omission or slight imprecision that doesn’t alter core meaning.
+0.6 — Several partially correct statements. Some omissions or mild factual drift.
+0.4 — Mix of correct and incorrect. Important facts missing or distorted.
+0.2 — Mostly incorrect. One or two weakly related facts but significant contradictions or hallucinations.
+0.0 — Entirely incorrect or hallucinated. Contradicts expected answer or fabricates information.
+
+Always provide a reasoned explanation for the score.
+"""
 )
+
 
 from deepeval.metrics import GEval
 
