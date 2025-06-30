@@ -1,8 +1,12 @@
-Based on the document and the given subject–relation–object triplet, write a rich and precise description of the relationship between the two entities.
-Your description must:
-Clearly state what occurred between the subject and object.
-Include when the event or relationship took place (if specified).
-Explain why it happened — the reason, cause, or motivation.
-Describe how it happened — the process, method, agreement, or context.
-Highlight any impact or consequences for either or both entities.
-Important: Use only the information present in the document. Be specific and fact-based. Avoid vague wording, assumptions, or generic language.
+Extract all meaningful entities mentioned in the following document. For each entity, return:
+"name": the exact name or label as mentioned in the text
+"type": the semantic type (choose from: Person, Organization, Location, Product, Concept, Event, Date, Law, WorkOfArt, etc.)
+"description": a rich, factual summary of what the entity is, based only on the document — include purpose, role, context, or significance
+📌 Instructions:
+Be comprehensive — include all named entities (people, companies, events) and non-named key concepts (e.g., “artificial intelligence”, “global warming”, “funding round”)
+Be precise — the description should answer:
+→ What is it?
+→ What does it do / represent / mean in this context?
+→ Why is it important in the document?
+Use only the information from the document. No external facts. No speculation.
+Return the result as a JSON list of entities.
