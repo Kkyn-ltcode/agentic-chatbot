@@ -9,13 +9,270 @@ metadata: tools required, duration, special notes (if any)
 outcomes: what happens if the procedure is followed correctly
 metadata: source link or file, tags, etc.
 
-If the document is a step-by-step guide, instructional manual, or how-to, extract it as a structured procedure with the following fields:
-name: the title of the guide (or leave blank if not specified)
-description: a summary of what this guide is for
-preconditions: what must be true before the procedure starts
-steps: a numbered list of step instructions. For each step, include:
-step_number
-action (what to do)
-metadata: tools required, duration, special notes (if any)
-outcomes: what happens if the procedure is followed correctly
-metadata: source link or file, tags, etc.
+Absolutely! Below is a **few-shot prompt** tailored to extract rich, structured **procedures** from instructional or step-by-step documents. This version assumes you're adding a `procedure` section **in addition to** `entities`, `relationships`, and optionally `rules`.
+
+---
+
+## ✅ FULL FEW-SHOT PROMPT: PROCEDURE EXTRACTION
+
+> You are an expert information extraction system.
+> You will read a document and extract structured knowledge in **JSON format**, covering:
+>
+> 1. `entities`: all relevant people, tools, devices, locations, etc.
+> 2. `procedure`: a structured sequence of steps that achieves a goal.
+> 3. `document_metadata`: information about the document itself.
+>
+> Focus especially on documents that explain **how to do something**. Extract all **steps**, **required tools**, **preconditions**, and **expected outcomes**. Be faithful to the content — do not add or assume anything not present in the document.
+
+---
+
+### ✅ OUTPUT SCHEMA
+
+#### 🔹 `entities`:
+
+```json
+{
+  "name": "string",
+  "type": "Device | Tool | Software | Concept | Person | Location | etc.",
+  "description": "Specific description based on the document.",
+  "metadata": {
+    "mentioned_in": ["sentence 2"],
+    "used_in_step": [1, 3]
+  }
+}
+```
+
+#### 🔹 `procedure`:
+
+```json
+{
+  "name": "string",
+  "description": "What this procedure accomplishes",
+  "preconditions": ["list of any required setup or conditions"],
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "Clear, instructional action text",
+      "metadata": {
+        "tools_required": ["Tool name"],
+        "duration": "Optional duration",
+        "referenced_entities": ["Router", "Reset Button"]
+      }
+    }
+  ],
+  "outcomes": ["Expected results after following the steps"],
+  "metadata": {
+    "source": "file:///Users/kkyn/Documents/router_guide.pdf",
+    "topic_tags": ["networking", "home setup"]
+  }
+}
+```
+
+#### 🔹 `document_metadata`:
+
+```json
+{
+  "title": "string",
+  "language": "en",
+  "source": "file:// or URL",
+  "topic_tags": ["list of keywords"]
+}
+```
+
+---
+
+## ✨ FEW-SHOT EXAMPLES
+
+---
+
+### 🧪 Example 1: Resetting a Wi-Fi Router
+
+**Document**:
+"To reset your Wi-Fi router, first locate the reset button on the back. Then press and hold it for 10 seconds using a paperclip. Wait for the router to reboot and return to default settings."
+
+**Extraction**:
+
+```json
+{
+  "entities": [
+    {
+      "name": "Router",
+      "type": "Device",
+      "description": "A home Wi-Fi router that is being reset.",
+      "metadata": {
+        "mentioned_in": ["sentence 1"],
+        "used_in_step": [1, 3]
+      }
+    },
+    {
+      "name": "Reset Button",
+      "type": "Component",
+      "description": "A physical button on the back of the router used to reset it.",
+      "metadata": {
+        "mentioned_in": ["sentence 1"],
+        "used_in_step": [1, 2]
+      }
+    },
+    {
+      "name": "Paperclip",
+      "type": "Tool",
+      "description": "A common tool used to press small reset buttons.",
+      "metadata": {
+        "mentioned_in": ["sentence 2"],
+        "used_in_step": [2]
+      }
+    }
+  ],
+  "procedure": {
+    "name": "Reset Wi-Fi Router",
+    "description": "A guide to reset your router to factory settings.",
+    "preconditions": [
+      "Router must be powered on",
+      "User must have physical access to the device"
+    ],
+    "steps": [
+      {
+        "step_number": 1,
+        "action": "Locate the reset button on the back of the router.",
+        "metadata": {
+          "tools_required": [],
+          "referenced_entities": ["Router", "Reset Button"]
+        }
+      },
+      {
+        "step_number": 2,
+        "action": "Press and hold the reset button for 10 seconds using a paperclip.",
+        "metadata": {
+          "tools_required": ["Paperclip"],
+          "duration": "10 seconds",
+          "referenced_entities": ["Reset Button", "Paperclip"]
+        }
+      },
+      {
+        "step_number": 3,
+        "action": "Wait for the router to reboot.",
+        "metadata": {
+          "tools_required": [],
+          "duration": "1–2 minutes",
+          "referenced_entities": ["Router"]
+        }
+      }
+    ],
+    "outcomes": [
+      "Router is reset to factory settings",
+      "All previous configurations are erased"
+    ],
+    "metadata": {
+      "source": "file:///Users/kkyn/Documents/router_reset.txt",
+      "topic_tags": ["networking", "router", "factory reset"]
+    }
+  },
+  "document_metadata": {
+    "title": "Router Reset Instructions",
+    "language": "en",
+    "source": "file:///Users/kkyn/Documents/router_reset.txt",
+    "topic_tags": ["tech", "how-to", "networking"]
+  }
+}
+```
+
+---
+
+### 🧪 Example 2: Installing an App on Android
+
+**Document**:
+"To install the app, go to the Play Store, search for 'NotePro', and tap install. Once installed, open the app and sign in with your email."
+
+**Extraction**:
+
+```json
+{
+  "entities": [
+    {
+      "name": "NotePro",
+      "type": "Software",
+      "description": "A note-taking application available on Android.",
+      "metadata": {
+        "mentioned_in": ["sentence 1"],
+        "used_in_step": [2, 3]
+      }
+    },
+    {
+      "name": "Play Store",
+      "type": "Platform",
+      "description": "Google’s Android app store.",
+      "metadata": {
+        "mentioned_in": ["sentence 1"],
+        "used_in_step": [1]
+      }
+    }
+  ],
+  "procedure": {
+    "name": "Install NotePro App on Android",
+    "description": "Instructions to install and open the NotePro app.",
+    "preconditions": [
+      "Android device is connected to the internet",
+      "User has access to Google Play Store"
+    ],
+    "steps": [
+      {
+        "step_number": 1,
+        "action": "Open the Play Store on your Android device.",
+        "metadata": {
+          "tools_required": [],
+          "referenced_entities": ["Play Store"]
+        }
+      },
+      {
+        "step_number": 2,
+        "action": "Search for 'NotePro' and tap the install button.",
+        "metadata": {
+          "tools_required": [],
+          "referenced_entities": ["NotePro"]
+        }
+      },
+      {
+        "step_number": 3,
+        "action": "Open NotePro and sign in using your email address.",
+        "metadata": {
+          "tools_required": [],
+          "referenced_entities": ["NotePro"]
+        }
+      }
+    ],
+    "outcomes": [
+      "NotePro is installed and ready to use on the device"
+    ],
+    "metadata": {
+      "source": "file:///Users/kkyn/Documents/install_notepro.txt",
+      "topic_tags": ["android", "app installation", "NotePro"]
+    }
+  },
+  "document_metadata": {
+    "title": "Installing NotePro on Android",
+    "language": "en",
+    "source": "file:///Users/kkyn/Documents/install_notepro.txt",
+    "topic_tags": ["android", "installation", "how-to"]
+  }
+}
+```
+
+---
+
+## 📝 Now Your Turn:
+
+**Document to analyze:**
+
+```
+{ Paste your step-by-step guide here. }
+```
+
+---
+
+Would you like:
+
+* 🇻🇳 A Vietnamese version of this prompt?
+* 🧠 A LangChain or agent planning-compatible version?
+* 🧩 A Python script to auto-parse these into graph format?
+
+Just say the word.
