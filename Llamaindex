@@ -1,1 +1,5 @@
-https://drive.google.com/file/d/1hjQDjxHimdmunEdi-cpuEA-iR2PMxFEM/view?usp=share_link
+FILE_ID="1z8YwHZKxeDK6g3-4uOAy5zU-4A"
+FILE_NAME="myfile.zip"
+
+# For small files:
+wget --no-check-certificate "https://docs.google.com/uc?export=download&id=${FILE_ID}" -O ${FILE_NAME}
