@@ -1,82 +1,53 @@
-from docx import Document as DocxDocument
+import fitz  # PyMuPDF
 from nltk.tokenize import sent_tokenize
 from langchain.schema import Document as LangChainDocument
 import tiktoken
 
-# Choose tokenizer based on your target model
-encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")  # or "gpt-4", "gpt-4o"
+# Tokenizer config
+encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-# Count tokens using tiktoken
-def count_tokens(text: str) -> int:
+def count_tokens(text):
     return len(encoding.encode(text))
 
-# Step 1: Load and group docx by headings
-def load_docx_with_sections(path):
-    doc = DocxDocument(path)
-    sections = []
-    current_section = {"title": "Untitled", "content": []}
-
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-
-        style = para.style.name.lower()
-        if "heading" in style:
-            if current_section["content"]:
-                sections.append(current_section)
-            current_section = {"title": text, "content": []}
-        else:
-            current_section["content"].append(text)
-
-    if current_section["content"]:
-        sections.append(current_section)
-
-    return sections
-
-# Step 2: Sentence-aware, token-limited chunking using tiktoken
 def chunk_sentences(sentences, max_tokens=512):
     chunks = []
     current_chunk = ""
     current_tokens = 0
 
     for sent in sentences:
-        sent = sent.strip()
-        if not sent:
-            continue
-
-        sent_tokens = count_tokens(sent)
-        if current_tokens + sent_tokens > max_tokens:
+        tokens = count_tokens(sent)
+        if current_tokens + tokens > max_tokens:
             if current_chunk:
                 chunks.append(current_chunk.strip())
             current_chunk = sent
-            current_tokens = sent_tokens
+            current_tokens = tokens
         else:
             current_chunk += " " + sent
-            current_tokens += sent_tokens
+            current_tokens += tokens
 
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
 
     return chunks
 
-# Step 3: Process each section
-def chunk_section(section, max_tokens=512):
-    all_sentences = []
-    for para in section["content"]:
-        all_sentences.extend(sent_tokenize(para))
-
-    text_chunks = chunk_sentences(all_sentences, max_tokens)
-    return [
-        LangChainDocument(page_content=chunk, metadata={"section": section["title"]})
-        for chunk in text_chunks
-    ]
-
-# Step 4: Main pipeline
-def chunk_docx_to_documents(docx_path, max_tokens=512):
-    sections = load_docx_with_sections(docx_path)
+def extract_pdf_chunks(path, max_tokens=512):
+    doc = fitz.open(path)
     all_chunks = []
-    for section in sections:
-        chunks = chunk_section(section, max_tokens)
-        all_chunks.extend(chunks)
+
+    for i, page in enumerate(doc):
+        text = page.get_text().strip()
+        if not text:
+            continue
+
+        sentences = sent_tokenize(text)
+        chunks = chunk_sentences(sentences, max_tokens)
+
+        for chunk in chunks:
+            all_chunks.append(
+                LangChainDocument(
+                    page_content=chunk,
+                    metadata={"source": path, "page": i + 1}
+                )
+            )
+
     return all_chunks
