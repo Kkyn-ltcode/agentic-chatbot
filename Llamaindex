@@ -1,5 +1,86 @@
-FILE_ID="1z8YwHZKxeDK6g3-4uOAy5zU-4A"
-FILE_NAME="myfile.zip"
+import nltk
+nltk.download('punkt')
+from langchain.document_loaders import UnstructuredWordDocumentLoader
+from langchain.schema import Document
+from nltk.tokenize import sent_tokenize
+from transformers import AutoTokenizer
 
-# For small files:
-wget --no-check-certificate "https://docs.google.com/uc?export=download&id=${FILE_ID}" -O ${FILE_NAME}
+# Initialize tokenizer (choose one based on your LLM)
+tokenizer = AutoTokenizer.from_pretrained("gpt2")  # or mistralai/Mistral-7B-Instruct, etc.
+
+# Load .docx and extract structured elements
+def load_elements(docx_path):
+    loader = UnstructuredWordDocumentLoader(docx_path)
+    docs = loader.load()
+    return docs
+
+# Group elements under section titles
+def group_by_sections(elements):
+    sections = []
+    current_section = {"title": "Untitled", "content": []}
+
+    for doc in elements:
+        text = doc.page_content.strip()
+        if not text:
+            continue
+
+        # Treat short lines as section headers
+        if len(text) < 100 and text.isupper() or text.istitle():
+            if current_section["content"]:
+                sections.append(current_section)
+            current_section = {"title": text, "content": []}
+        else:
+            current_section["content"].append(text)
+
+    if current_section["content"]:
+        sections.append(current_section)
+    return sections
+
+# Sentence-aware token-safe chunking
+def chunk_sentences(sentences, max_tokens=512):
+    chunks = []
+    current_chunk = ""
+    current_tokens = 0
+
+    for sent in sentences:
+        tokens = len(tokenizer.tokenize(sent))
+        if current_tokens + tokens > max_tokens:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sent
+            current_tokens = tokens
+        else:
+            current_chunk += " " + sent
+            current_tokens += tokens
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    return chunks
+
+# Chunk section by sentences with token limit
+def chunk_section(section, max_tokens=512):
+    text = "\n".join(section["content"])
+    sentences = sent_tokenize(text)
+    sentence_chunks = chunk_sentences(sentences, max_tokens=max_tokens)
+
+    # Return LangChain Document objects with metadata
+    return [
+        Document(page_content=chunk, metadata={"section": section["title"]})
+        for chunk in sentence_chunks
+    ]
+def chunk_docx_to_documents(docx_path, max_tokens=512):
+    elements = load_elements(docx_path)
+    grouped = group_by_sections(elements)
+
+    all_chunks = []
+    for section in grouped:
+        chunks = chunk_section(section, max_tokens=max_tokens)
+        all_chunks.extend(chunks)
+
+    return all_chunks
+
+# Example usage
+docs = chunk_docx_to_documents("your_file.docx", max_tokens=512)
+
+print(f"Total chunks: {len(docs)}")
+print(docs[0].page_content[:500])  # Preview first chunk
