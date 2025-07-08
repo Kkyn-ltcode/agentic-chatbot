@@ -1,29 +1,28 @@
-from langchain.document_loaders import UnstructuredWordDocumentLoader
-from langchain.schema import Document
+from docx import Document as DocxDocument
 from nltk.tokenize import sent_tokenize
-from transformers import AutoTokenizer
+from langchain.schema import Document as LangChainDocument
+import tiktoken
 
-# Initialize tokenizer (choose one based on your LLM)
-tokenizer = AutoTokenizer.from_pretrained("gpt2")  # or mistralai/Mistral-7B-Instruct, etc.
+# Choose tokenizer based on your target model
+encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")  # or "gpt-4", "gpt-4o"
 
-# Load .docx and extract structured elements
-def load_elements(docx_path):
-    loader = UnstructuredWordDocumentLoader(docx_path)
-    docs = loader.load()
-    return docs
+# Count tokens using tiktoken
+def count_tokens(text: str) -> int:
+    return len(encoding.encode(text))
 
-# Group elements under section titles
-def group_by_sections(elements):
+# Step 1: Load and group docx by headings
+def load_docx_with_sections(path):
+    doc = DocxDocument(path)
     sections = []
     current_section = {"title": "Untitled", "content": []}
 
-    for doc in elements:
-        text = doc.page_content.strip()
+    for para in doc.paragraphs:
+        text = para.text.strip()
         if not text:
             continue
 
-        # Treat short lines as section headers
-        if len(text) < 100 and text.isupper() or text.istitle():
+        style = para.style.name.lower()
+        if "heading" in style:
             if current_section["content"]:
                 sections.append(current_section)
             current_section = {"title": text, "content": []}
@@ -32,37 +31,52 @@ def group_by_sections(elements):
 
     if current_section["content"]:
         sections.append(current_section)
+
     return sections
 
-# Sentence-aware token-safe chunking
+# Step 2: Sentence-aware, token-limited chunking using tiktoken
 def chunk_sentences(sentences, max_tokens=512):
     chunks = []
     current_chunk = ""
     current_tokens = 0
 
     for sent in sentences:
-        tokens = len(tokenizer.tokenize(sent))
-        if current_tokens + tokens > max_tokens:
+        sent = sent.strip()
+        if not sent:
+            continue
+
+        sent_tokens = count_tokens(sent)
+        if current_tokens + sent_tokens > max_tokens:
             if current_chunk:
                 chunks.append(current_chunk.strip())
             current_chunk = sent
-            current_tokens = tokens
+            current_tokens = sent_tokens
         else:
             current_chunk += " " + sent
-            current_tokens += tokens
+            current_tokens += sent_tokens
 
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
+
     return chunks
 
-# Chunk section by sentences with token limit
+# Step 3: Process each section
 def chunk_section(section, max_tokens=512):
-    text = "\n".join(section["content"])
-    sentences = sent_tokenize(text)
-    sentence_chunks = chunk_sentences(sentences, max_tokens=max_tokens)
+    all_sentences = []
+    for para in section["content"]:
+        all_sentences.extend(sent_tokenize(para))
 
-    # Return LangChain Document objects with metadata
+    text_chunks = chunk_sentences(all_sentences, max_tokens)
     return [
-        Document(page_content=chunk, metadata={"section": section["title"]})
-        for chunk in sentence_chunks
+        LangChainDocument(page_content=chunk, metadata={"section": section["title"]})
+        for chunk in text_chunks
     ]
+
+# Step 4: Main pipeline
+def chunk_docx_to_documents(docx_path, max_tokens=512):
+    sections = load_docx_with_sections(docx_path)
+    all_chunks = []
+    for section in sections:
+        chunks = chunk_section(section, max_tokens)
+        all_chunks.extend(chunks)
+    return all_chunks
