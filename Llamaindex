@@ -1,13 +1,20 @@
-import fitz  # PyMuPDF
+from pptx import Presentation
 from nltk.tokenize import sent_tokenize
 from langchain.schema import Document as LangChainDocument
 import tiktoken
+import re
 
-# Tokenizer config
+# tiktoken tokenizer
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
 def count_tokens(text):
     return len(encoding.encode(text))
+
+def clean_text(text):
+    text = re.sub(r'[\ue000-\uf8ff]', '', text)  # remove private use unicode
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)  # control chars
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 def chunk_sentences(sentences, max_tokens=512):
     chunks = []
@@ -15,6 +22,9 @@ def chunk_sentences(sentences, max_tokens=512):
     current_tokens = 0
 
     for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
         tokens = count_tokens(sent)
         if current_tokens + tokens > max_tokens:
             if current_chunk:
@@ -30,12 +40,17 @@ def chunk_sentences(sentences, max_tokens=512):
 
     return chunks
 
-def extract_pdf_chunks(path, max_tokens=512):
-    doc = fitz.open(path)
+def extract_pptx_chunks(path, max_tokens=512):
+    prs = Presentation(path)
     all_chunks = []
 
-    for i, page in enumerate(doc):
-        text = page.get_text().strip()
+    for i, slide in enumerate(prs.slides):
+        slide_text = ""
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                slide_text += shape.text + "\n"
+
+        text = clean_text(slide_text)
         if not text:
             continue
 
@@ -46,7 +61,7 @@ def extract_pdf_chunks(path, max_tokens=512):
             all_chunks.append(
                 LangChainDocument(
                     page_content=chunk,
-                    metadata={"source": path, "page": i + 1}
+                    metadata={"source": path, "slide": i + 1}
                 )
             )
 
