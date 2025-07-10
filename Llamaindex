@@ -1,10 +1,7 @@
-You are an expert summarization assistant. Given the input context, your task is to generate a clear, concise, and accurate summary that captures the most important information, key ideas, and intent of the original content.
-Requirements:
-Preserve the factual integrity of the input.
-Avoid personal opinions, assumptions, or hallucinations.
-Prioritize relevance, clarity, and brevity.
-Use natural, fluent language appropriate for the domain of the content.
-Input:
-[Insert context here]
-Output:
-A high-quality summary that faithfully represents the core meaning and key points of the input.
+Experienced in Python for AI-related tasks such as data preprocessing, analysis, and prototype development, using libraries like pandas, numpy, and scikit-learn. Familiar with API usage and cloud integration concepts, with ongoing efforts to deepen practical experience in those areas.
+
+Experienced in collecting and processing data from various sources including websites, Hugging Face datasets, and local files, with a focus on Thai and Vietnamese language resources. Skilled in data cleaning, format conversion (e.g., CSV, JSON, Excel, and Hugging Face datasets), and preparing data for downstream AI tasks through standard preprocessing workflows.
+
+Solid understanding of core machine learning concepts including supervised and unsupervised learning. Experienced with scikit-learn for traditional ML tasks, and proficient in using PyTorch and Hugging Face Transformers for training and fine-tuning deep learning models, particularly large language models (LLMs). Familiar with optimization techniques and inference acceleration frameworks such as vLLM.
+
+Currently developing a chatbot system using Retrieval-Augmented Generation (RAG) to enhance response quality with context-aware retrieval. While not yet experienced with agent orchestration frameworks like LangChain or CrewAI, I have a solid understanding of RAG principles and am actively exploring the broader AI agent landscape to support more autonomous, tool-augmented interactions in future projects.
