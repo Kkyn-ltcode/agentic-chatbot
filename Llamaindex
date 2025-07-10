@@ -1,68 +1,10 @@
-from pptx import Presentation
-from nltk.tokenize import sent_tokenize
-from langchain.schema import Document as LangChainDocument
-import tiktoken
-import re
-
-# tiktoken tokenizer
-encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-
-def count_tokens(text):
-    return len(encoding.encode(text))
-
-def clean_text(text):
-    text = re.sub(r'[\ue000-\uf8ff]', '', text)  # remove private use unicode
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)  # control chars
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-def chunk_sentences(sentences, max_tokens=512):
-    chunks = []
-    current_chunk = ""
-    current_tokens = 0
-
-    for sent in sentences:
-        sent = sent.strip()
-        if not sent:
-            continue
-        tokens = count_tokens(sent)
-        if current_tokens + tokens > max_tokens:
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            current_chunk = sent
-            current_tokens = tokens
-        else:
-            current_chunk += " " + sent
-            current_tokens += tokens
-
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-
-    return chunks
-
-def extract_pptx_chunks(path, max_tokens=512):
-    prs = Presentation(path)
-    all_chunks = []
-
-    for i, slide in enumerate(prs.slides):
-        slide_text = ""
-        for shape in slide.shapes:
-            if hasattr(shape, "text"):
-                slide_text += shape.text + "\n"
-
-        text = clean_text(slide_text)
-        if not text:
-            continue
-
-        sentences = sent_tokenize(text)
-        chunks = chunk_sentences(sentences, max_tokens)
-
-        for chunk in chunks:
-            all_chunks.append(
-                LangChainDocument(
-                    page_content=chunk,
-                    metadata={"source": path, "slide": i + 1}
-                )
-            )
-
-    return all_chunks
+You are an expert summarization assistant. Given the input context, your task is to generate a clear, concise, and accurate summary that captures the most important information, key ideas, and intent of the original content.
+Requirements:
+Preserve the factual integrity of the input.
+Avoid personal opinions, assumptions, or hallucinations.
+Prioritize relevance, clarity, and brevity.
+Use natural, fluent language appropriate for the domain of the content.
+Input:
+[Insert context here]
+Output:
+A high-quality summary that faithfully represents the core meaning and key points of the input.
