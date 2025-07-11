@@ -1,7 +1,496 @@
-Experienced in Python for AI-related tasks such as data preprocessing, analysis, and prototype development, using libraries like pandas, numpy, and scikit-learn. Familiar with API usage and cloud integration concepts, with ongoing efforts to deepen practical experience in those areas.
+import os
+import logging
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+import asyncio
+from pathlib import Path
+import json
+import pickle
+from datetime import datetime
 
-Experienced in collecting and processing data from various sources including websites, Hugging Face datasets, and local files, with a focus on Thai and Vietnamese language resources. Skilled in data cleaning, format conversion (e.g., CSV, JSON, Excel, and Hugging Face datasets), and preparing data for downstream AI tasks through standard preprocessing workflows.
+# Core LangChain imports
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.llms import HuggingFacePipeline
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.prompts import PromptTemplate
+from langchain.callbacks.manager import CallbackManager
+from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 
-Solid understanding of core machine learning concepts including supervised and unsupervised learning. Experienced with scikit-learn for traditional ML tasks, and proficient in using PyTorch and Hugging Face Transformers for training and fine-tuning deep learning models, particularly large language models (LLMs). Familiar with optimization techniques and inference acceleration frameworks such as vLLM.
+# RAPTOR specific imports
+from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
+from langchain.schema.output_parser import StrOutputParser
 
-Currently developing a chatbot system using Retrieval-Augmented Generation (RAG) to enhance response quality with context-aware retrieval. While not yet experienced with agent orchestration frameworks like LangChain or CrewAI, I have a solid understanding of RAG principles and am actively exploring the broader AI agent landscape to support more autonomous, tool-augmented interactions in future projects.
+# HuggingFace and ML imports
+from transformers import (
+    AutoTokenizer, AutoModelForCausalLM, 
+    pipeline, BitsAndBytesConfig
+)
+import torch
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Web framework
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class ChatBotConfig:
+    """Configuration class for the RAG chatbot"""
+    model_name: str = "microsoft/DialoGPT-medium"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+    max_clusters: int = 10
+    temperature: float = 0.7
+    max_tokens: int = 512
+    memory_window: int = 10
+    similarity_threshold: float = 0.7
+    data_path: str = "./data"
+    index_path: str = "./indexes"
+    cache_path: str = "./cache"
+
+class RAPTORTreeBuilder:
+    """Implements the RAPTOR technique for hierarchical document clustering and summarization"""
+    
+    def __init__(self, config: ChatBotConfig):
+        self.config = config
+        self.embedding_model = SentenceTransformer(config.embedding_model)
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap
+        )
+        
+        # Load summarization model
+        self.summarizer = pipeline(
+            "summarization",
+            model="facebook/bart-large-cnn",
+            device=0 if torch.cuda.is_available() else -1,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+        )
+        
+    def build_raptor_tree(self, documents: List[Document]) -> Dict[str, Any]:
+        """Build hierarchical RAPTOR tree from documents"""
+        logger.info(f"Building RAPTOR tree from {len(documents)} documents")
+        
+        # Step 1: Initial chunking
+        chunks = self.text_splitter.split_documents(documents)
+        logger.info(f"Created {len(chunks)} initial chunks")
+        
+        # Step 2: Build tree levels
+        tree_levels = []
+        current_level = chunks
+        level = 0
+        
+        while len(current_level) > 1 and level < 5:  # Max 5 levels
+            logger.info(f"Building tree level {level} with {len(current_level)} nodes")
+            
+            # Get embeddings for current level
+            texts = [doc.page_content for doc in current_level]
+            embeddings = self.embedding_model.encode(texts)
+            
+            # Cluster documents
+            n_clusters = min(self.config.max_clusters, len(current_level) // 2)
+            if n_clusters < 2:
+                break
+                
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(embeddings)
+            
+            # Create summaries for each cluster
+            next_level = []
+            for cluster_id in range(n_clusters):
+                cluster_docs = [doc for i, doc in enumerate(current_level) 
+                              if cluster_labels[i] == cluster_id]
+                
+                if len(cluster_docs) > 1:
+                    # Combine cluster documents
+                    combined_text = "\n\n".join([doc.page_content for doc in cluster_docs])
+                    
+                    # Generate summary
+                    summary = self._generate_summary(combined_text)
+                    
+                    # Create new document with summary
+                    summary_doc = Document(
+                        page_content=summary,
+                        metadata={
+                            "level": level + 1,
+                            "cluster_id": cluster_id,
+                            "source_docs": len(cluster_docs),
+                            "summary": True
+                        }
+                    )
+                    next_level.append(summary_doc)
+                else:
+                    # Single document, promote to next level
+                    cluster_docs[0].metadata["level"] = level + 1
+                    next_level.append(cluster_docs[0])
+            
+            tree_levels.append(current_level)
+            current_level = next_level
+            level += 1
+        
+        if current_level:
+            tree_levels.append(current_level)
+        
+        logger.info(f"Built RAPTOR tree with {len(tree_levels)} levels")
+        return {
+            "tree_levels": tree_levels,
+            "all_documents": self._flatten_tree(tree_levels)
+        }
+    
+    def _generate_summary(self, text: str) -> str:
+        """Generate summary for a cluster of documents"""
+        # Truncate text if too long
+        max_length = 1024
+        if len(text) > max_length:
+            text = text[:max_length]
+        
+        try:
+            summary = self.summarizer(text, max_length=150, min_length=50, do_sample=False)
+            return summary[0]['summary_text']
+        except Exception as e:
+            logger.warning(f"Summarization failed: {e}")
+            # Fallback to truncation
+            return text[:200] + "..."
+    
+    def _flatten_tree(self, tree_levels: List[List[Document]]) -> List[Document]:
+        """Flatten tree into a single list of documents"""
+        all_docs = []
+        for level in tree_levels:
+            all_docs.extend(level)
+        return all_docs
+
+class ProductionRAGChatbot:
+    """Production-quality RAG chatbot with RAPTOR technique"""
+    
+    def __init__(self, config: ChatBotConfig):
+        self.config = config
+        self.setup_directories()
+        
+        # Initialize components
+        self.raptor_builder = RAPTORTreeBuilder(config)
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name=config.embedding_model,
+            model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
+        )
+        
+        # Initialize LLM
+        self.llm = self._setup_llm()
+        
+        # Initialize vector store
+        self.vector_store = None
+        self.retriever = None
+        
+        # Initialize memory
+        self.memory = ConversationBufferWindowMemory(
+            k=config.memory_window,
+            return_messages=True,
+            memory_key="chat_history"
+        )
+        
+        # Initialize conversation chain
+        self.conversation_chain = None
+        
+        logger.info("RAG Chatbot initialized successfully")
+    
+    def setup_directories(self):
+        """Create necessary directories"""
+        for path in [self.config.data_path, self.config.index_path, self.config.cache_path]:
+            Path(path).mkdir(parents=True, exist_ok=True)
+    
+    def _setup_llm(self) -> HuggingFacePipeline:
+        """Setup the language model"""
+        logger.info("Loading language model...")
+        
+        # Quantization config for efficiency
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4"
+        )
+        
+        # Load model and tokenizer
+        model_name = "microsoft/DialoGPT-medium"  # You can change to other models
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        
+        # Add pad token if not present
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            quantization_config=quantization_config if torch.cuda.is_available() else None,
+            device_map="auto" if torch.cuda.is_available() else None,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+        )
+        
+        # Create pipeline
+        pipe = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=self.config.max_tokens,
+            temperature=self.config.temperature,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        
+        return HuggingFacePipeline(pipeline=pipe)
+    
+    def load_documents(self, file_paths: List[str]) -> List[Document]:
+        """Load documents from various file formats"""
+        documents = []
+        
+        for file_path in file_paths:
+            logger.info(f"Loading document: {file_path}")
+            
+            if file_path.endswith('.txt'):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    documents.append(Document(
+                        page_content=content,
+                        metadata={"source": file_path}
+                    ))
+            elif file_path.endswith('.json'):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        for item in data:
+                            documents.append(Document(
+                                page_content=str(item),
+                                metadata={"source": file_path}
+                            ))
+                    else:
+                        documents.append(Document(
+                            page_content=str(data),
+                            metadata={"source": file_path}
+                        ))
+            # Add more file type handlers as needed
+        
+        logger.info(f"Loaded {len(documents)} documents")
+        return documents
+    
+    def build_knowledge_base(self, documents: List[Document]):
+        """Build the knowledge base using RAPTOR technique"""
+        logger.info("Building knowledge base with RAPTOR...")
+        
+        # Build RAPTOR tree
+        raptor_tree = self.raptor_builder.build_raptor_tree(documents)
+        
+        # Create vector store from all documents
+        all_documents = raptor_tree["all_documents"]
+        
+        # Create FAISS index
+        self.vector_store = FAISS.from_documents(
+            all_documents,
+            self.embeddings
+        )
+        
+        # Save index
+        index_path = os.path.join(self.config.index_path, "raptor_index")
+        self.vector_store.save_local(index_path)
+        
+        # Create retriever
+        self.retriever = self.vector_store.as_retriever(
+            search_kwargs={"k": 5}
+        )
+        
+        # Setup conversation chain
+        self._setup_conversation_chain()
+        
+        logger.info("Knowledge base built successfully")
+    
+    def _setup_conversation_chain(self):
+        """Setup the conversational retrieval chain"""
+        
+        # Custom prompt template
+        prompt_template = """You are a helpful AI assistant. Use the following context to answer the user's question.
+        If you don't know the answer based on the context, say so clearly.
+        
+        Context: {context}
+        
+        Chat History: {chat_history}
+        
+        Human: {question}
+        
+        Assistant: """
+        
+        prompt = PromptTemplate(
+            template=prompt_template,
+            input_variables=["context", "chat_history", "question"]
+        )
+        
+        self.conversation_chain = ConversationalRetrievalChain.from_llm(
+            llm=self.llm,
+            retriever=self.retriever,
+            memory=self.memory,
+            combine_docs_chain_kwargs={"prompt": prompt},
+            return_source_documents=True,
+            verbose=True
+        )
+    
+    def chat(self, question: str) -> Dict[str, Any]:
+        """Chat with the bot"""
+        if not self.conversation_chain:
+            raise ValueError("Knowledge base not built. Call build_knowledge_base first.")
+        
+        logger.info(f"Processing question: {question}")
+        
+        try:
+            result = self.conversation_chain({"question": question})
+            
+            response = {
+                "answer": result["answer"],
+                "source_documents": [
+                    {
+                        "content": doc.page_content[:200] + "...",
+                        "metadata": doc.metadata
+                    }
+                    for doc in result.get("source_documents", [])
+                ],
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            logger.info("Response generated successfully")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error during chat: {e}")
+            return {
+                "answer": "I apologize, but I encountered an error processing your question.",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def load_knowledge_base(self) -> bool:
+        """Load existing knowledge base"""
+        index_path = os.path.join(self.config.index_path, "raptor_index")
+        
+        if os.path.exists(index_path):
+            try:
+                self.vector_store = FAISS.load_local(
+                    index_path,
+                    self.embeddings
+                )
+                self.retriever = self.vector_store.as_retriever(
+                    search_kwargs={"k": 5}
+                )
+                self._setup_conversation_chain()
+                logger.info("Knowledge base loaded successfully")
+                return True
+            except Exception as e:
+                logger.error(f"Error loading knowledge base: {e}")
+                return False
+        return False
+
+# FastAPI Web Interface
+app = FastAPI(title="Production RAG Chatbot", version="1.0.0")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Request models
+class ChatRequest(BaseModel):
+    question: str
+    session_id: Optional[str] = None
+
+class DocumentUpload(BaseModel):
+    file_paths: List[str]
+
+# Global chatbot instance
+config = ChatBotConfig()
+chatbot = ProductionRAGChatbot(config)
+
+# Load existing knowledge base on startup
+@app.on_event("startup")
+async def startup_event():
+    """Load knowledge base on startup"""
+    if not chatbot.load_knowledge_base():
+        logger.warning("No existing knowledge base found. Upload documents to build one.")
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest):
+    """Chat endpoint"""
+    try:
+        response = chatbot.chat(request.question)
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload-documents")
+async def upload_documents(request: DocumentUpload, background_tasks: BackgroundTasks):
+    """Upload and process documents"""
+    try:
+        # Load documents
+        documents = chatbot.load_documents(request.file_paths)
+        
+        # Build knowledge base in background
+        background_tasks.add_task(chatbot.build_knowledge_base, documents)
+        
+        return {"message": "Documents uploaded successfully. Building knowledge base..."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+# CLI Interface
+def main():
+    """Main CLI interface"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Production RAG Chatbot")
+    parser.add_argument("--mode", choices=["cli", "web"], default="cli", help="Run mode")
+    parser.add_argument("--documents", nargs="+", help="Documents to load")
+    parser.add_argument("--port", type=int, default=8000, help="Port for web server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host for web server")
+    
+    args = parser.parse_args()
+    
+    if args.mode == "web":
+        # Run web server
+        uvicorn.run(app, host=args.host, port=args.port)
+    else:
+        # Run CLI
+        if args.documents:
+            documents = chatbot.load_documents(args.documents)
+            chatbot.build_knowledge_base(documents)
+        else:
+            chatbot.load_knowledge_base()
+        
+        print("RAG Chatbot initialized. Type 'quit' to exit.")
+        
+        while True:
+            question = input("\nYou: ")
+            if question.lower() in ['quit', 'exit']:
+                break
+            
+            response = chatbot.chat(question)
+            print(f"\nBot: {response['answer']}")
+            
+            if response.get('source_documents'):
+                print(f"\nSources: {len(response['source_documents'])} documents")
+
+if __name__ == "__main__":
+    main()
