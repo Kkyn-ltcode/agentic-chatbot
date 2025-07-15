@@ -1,44 +1,6 @@
-from underthesea import sent_tokenize
-from transformers import AutoTokenizer
-from langchain_core.documents import Document
-
-# Load tokenizer (Qwen or LLaMA)
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen1.5-0.5B", trust_remote_code=True)
-
-# Parameters
-chunk_size = 256
-chunk_overlap = 32
-
-def split_vietnamese_into_chunks(text):
-    # Step 1: Vietnamese sentence splitting
-    sentences = sent_tokenize(text)
-
-    # Step 2: Token-aware chunking
-    chunks = []
-    current_chunk = []
-    current_len = 0
-
-    for sentence in sentences:
-        token_count = len(tokenizer.encode(sentence, add_special_tokens=False))
-
-        if current_len + token_count > chunk_size:
-            if current_chunk:
-                chunks.append(" ".join(current_chunk))
-            # Overlap
-            if chunk_overlap > 0 and len(chunks) > 0:
-                prev_tokens = tokenizer.encode(chunks[-1], add_special_tokens=False)
-                overlap_tokens = prev_tokens[-chunk_overlap:]
-                overlap_text = tokenizer.decode(overlap_tokens)
-                current_chunk = [overlap_text]
-                current_len = len(overlap_tokens)
-            else:
-                current_chunk = []
-                current_len = 0
-
-        current_chunk.append(sentence)
-        current_len += token_count
-
-    if current_chunk:
-        chunks.append(" ".join(current_chunk))
-
-    return [Document(page_content=chunk) for chunk in chunks]
+"""
+    Search and return relevant sections from the company's internal policy documents
+    that answer or relate to the user's query. Use this tool whenever the query asks
+    about rules, procedures, employee rights, leave, code of conduct, benefits, or any
+    internal policy topics.
+    """
