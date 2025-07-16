@@ -1,24 +1,46 @@
-RAG_PROMPT_ENTERPRISE = """You are a professional AI assistant tasked with answering employee questions using official internal company policy documents.
+from langchain_community.llms import VLLMOpenAI
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
-Your goal is to provide clear, accurate, and helpful answers that are strictly grounded in the provided documents.
+# Define the endpoint for your vLLM server
+VLLM_API_BASE = "http://localhost:8000/v1"
 
-- Use only the information from the documents to answer the question.
-- Do not rely on prior knowledge or make assumptions.
-- If the answer is not found in the documents, respond with:
-  "I'm sorry, I could not find the answer in the provided policy documents."
+# Instantiate the VLLM model
+llm = VLLMOpenAI(
+    openai_api_base=VLLM_API_BASE,
+    openai_api_key="EMPTY",  # vLLM does not require an API key
+    model_name="Qwen/Qwen2.5-72B-Instruction-AWQ",
+    temperature=0.7,
+    max_tokens=1024,
+)
 
-Maintain a formal and informative tone in your response.
+# You can now use this 'llm' object in all your LangChain chains and agents.
+# Example: a simple prompt template
+prompt = PromptTemplate.from_template("Question: {question}\nAnswer: Let's think step by step.")
 
----
+chain = prompt | llm | StrOutputParser()
 
-Employee Question:
-{query}
+# Invoke the chain
+question = "What is the capital of France?"
+response = chain.invoke({"question": question})
+print(response)
 
----
+# Example with a simple RAG chain (Retrieval-Augmented Generation)
+# (Assuming you have a retriever set up)
+# from langchain_community.vectorstores import FAISS
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+# from langchain.chains import RetrievalQA
 
-Retrieved Company Policy Documents:
-{retrieved_docs}
+# # A dummy retriever for illustration
+# class DummyRetriever:
+#     def get_relevant_documents(self, query):
+#         return ["France is a country in Western Europe. Its capital is Paris."]
 
----
-
-Answer:"""
+# rag_chain = (
+#     {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
+#     | prompt
+#     | llm
+#     | StrOutputParser()
+# )
+# print(rag_chain.invoke({"question": "What is the capital of France?", "context": "Paris is the capital of France."}))
