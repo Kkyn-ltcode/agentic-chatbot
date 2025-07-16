@@ -1,33 +1,18 @@
-import os
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_core.documents import Document
+from langchain_core.runnables import RunnableLambda
 
-# This is your embedding tool.
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+# This component will just print its input and pass it along
+def print_output(input):
+    print("--- DEBUGGING: Output of the first chain step ---")
+    print("Type of input:", type(input))
+    print("Contents:", input)
+    print("--------------------------------------------------")
+    return input
 
-# This is a correctly formatted list of Document objects.
-correct_documents = [
-    Document(page_content="This is a test document."),
-    Document(page_content="This is another document.")
-]
-
-# This will call the embed_documents method that is throwing your error.
-# If this works, your embedding model is fine with the correct input.
-print("Trying to embed correctly formatted documents...")
-try:
-    vectors = embeddings.embed_documents([doc.page_content for doc in correct_documents])
-    print("Success! The embeddings model is working correctly.")
-except AttributeError as e:
-    print(f"An error occurred: {e}")
-
-# This will fail and produce the error you are seeing.
-# This is what's likely happening somewhere in your code.
-incorrect_documents = [{"text": "This is a broken document."}]
-print("\nTrying to embed incorrectly formatted documents...")
-try:
-    # This line will try to call 'replace' on the dict object in the list.
-    vectors = embeddings.embed_documents([doc.page_content for doc in incorrect_documents])
-    print("Success! The embeddings model is working correctly.")
-except AttributeError as e:
-    print(f"An error occurred: {e}")
-    print("The error is happening because you are passing a dictionary instead of a Document object.")
+# The updated base_rag_chain with our debug step
+base_rag_chain = (
+    {"context": retriever, "question": RunnablePassthrough()}
+    | RunnableLambda(print_output)  # Add the debug step here!
+    | rag_prompt
+    | llm
+    | StrOutputParser()
+)
