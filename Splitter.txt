@@ -1,82 +1,33 @@
 import os
-import asyncio
-from langchain_community.document_loaders import TextLoader
-from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 
-# --- Part 1: Setting Up the "Tools" ---
-# This is where we configure all the components we need.
-
-# A. The Embeddings tool to turn text into numbers
+# This is your embedding tool.
 embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
-# B. The Filing Cabinet (Vector Store) for your documents
-# We create a small dummy one for this example to make it runnable.
-doc_vectorstore = FAISS.from_documents(
-    [Document(page_content="The Amazon rainforest is located in South America."),
-     Document(page_content="The Amazon river is the largest river by discharge volume."),
-     Document(page_content="The sun is a star. It is in the center of the solar system.")],
-    embeddings
-)
+# This is a correctly formatted list of Document objects.
+correct_documents = [
+    Document(page_content="This is a test document."),
+    Document(page_content="This is another document.")
+]
 
-# C. The Retriever tool to search your Filing Cabinet
-retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
+# This will call the embed_documents method that is throwing your error.
+# If this works, your embedding model is fine with the correct input.
+print("Trying to embed correctly formatted documents...")
+try:
+    vectors = embeddings.embed_documents([doc.page_content for doc in correct_documents])
+    print("Success! The embeddings model is working correctly.")
+except AttributeError as e:
+    print(f"An error occurred: {e}")
 
-# D. The Qwen Brain (LLM) to generate the answer
-llm = ChatOpenAI(
-    model="Qwen/Qwen2.5-32B-Instruct",
-    openai_api_base="http://localhost:8000/v1",
-    openai_api_key="EMPTY",
-    max_tokens=2048,
-    stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
-)
-
-# --- Part 2: Building the "Form" or "Template" ---
-# This is the special form you will fill out with instructions.
-# Note: No `MessagesPlaceholder` is needed here!
-rag_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question."),
-    # The section for the current question and retrieved context
-    ("human", "Question: {question}\nContext: {context}")
-])
-
-# --- Part 3: The "Assembly Line" (The Final Chain) ---
-# This chain of pipes processes the input from start to finish.
-final_rag_chain = (
-    # First Station: Get the ingredients (context and question).
-    # This prepares the input for the next step in the chain.
-    {"context": retriever, "question": RunnablePassthrough()}
-    # Pipe: Pass the ingredients to the next step.
-    | rag_prompt
-    # Third Station: Fill out the form with the ingredients.
-    | llm
-    # Fourth Station: The Qwen Brain writes the answer.
-    | StrOutputParser()
-    # Fifth Station: Clean up the answer to a simple string.
-)
-
-# --- Part 4: The Main Execution Loop ---
-async def main():
-    print("Welcome to the stateless RAG chatbot! Type 'exit' to quit.")
-
-    while True:
-        question = input("You: ")
-        if question.lower() == 'exit':
-            break
-
-        print("Bot: ", end="", flush=True)
-
-        # We stream the response for a better user experience
-        async for chunk in final_rag_chain.astream({"question": question}):
-            print(chunk, end="", flush=True)
-
-        print() # Newline for the next turn
-
-# Run the script
-if __name__ == "__main__":
-    asyncio.run(main())
+# This will fail and produce the error you are seeing.
+# This is what's likely happening somewhere in your code.
+incorrect_documents = [{"text": "This is a broken document."}]
+print("\nTrying to embed incorrectly formatted documents...")
+try:
+    # This line will try to call 'replace' on the dict object in the list.
+    vectors = embeddings.embed_documents([doc.page_content for doc in incorrect_documents])
+    print("Success! The embeddings model is working correctly.")
+except AttributeError as e:
+    print(f"An error occurred: {e}")
+    print("The error is happening because you are passing a dictionary instead of a Document object.")
