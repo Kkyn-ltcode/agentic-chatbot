@@ -1,25 +1,29 @@
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain.tools import tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import SystemMessage
+from langchain_openai import ChatOpenAI
 
-agent_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
-               "You should only use the tools if necessary to answer the user's question.\n"
-               "If a question is about the Amazon rainforest, the Amazon river, or the solar system, prioritize using the `knowledge_base_search` tool.\n"
-               "You can also answer general conversational questions without tools.\n"
-               "\n" # Added a newline for clarity
-               "Use the following format:\n\n" # This is important for ReAct agents
-               "Question: the input question you must answer\n"
-               "Thought: you should always think about what to do\n"
-               "Action: the action to take, should be one of [{tool_names}]\n" # <--- **FIXED LINE**
-               "Action Input: the input to the action\n"
-               "Observation: the result of the action\n"
-               "...\n" # Ellipsis indicates multiple steps
-               "Thought: I now know the final answer\n"
-               "Final Answer: the final answer to the original input question"),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad")
+# Define tool
+@tool
+def multiply(a: int, b: int) -> int:
+    """Multiply two integers."""
+    return a * b
+
+tools = [multiply]
+
+# Define prompt
+prompt = ChatPromptTemplate.from_messages([
+    SystemMessage(content="You are a helpful assistant that reasons step-by-step."),
+    ("user", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
 
-# The rest of your code for creating agent and agent_executor remains the same:
-# agent = create_react_agent(llm=llm, tools=tools, prompt=agent_prompt)
-# agent_executor = AgentExecutor(...)
+# Create LLM and agent
+llm = ChatOpenAI(temperature=0)
+agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+# Run
+response = agent_executor.invoke({"input": "What is 8 multiplied by 6?"})
+print(response)
