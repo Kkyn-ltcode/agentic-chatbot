@@ -1,18 +1,191 @@
-from langchain_core.runnables import RunnableLambda
+import os
+import asyncio
+from operator import itemgetter
 
-# This component will just print its input and pass it along
-def print_output(input):
-    print("--- DEBUGGING: Output of the first chain step ---")
-    print("Type of input:", type(input))
-    print("Contents:", input)
-    print("--------------------------------------------------")
-    return input
+# --- Install if you haven't: pip install transformers ---
+from transformers import AutoTokenizer
 
-# The updated base_rag_chain with our debug step
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.output_parsers import StrOutputParser
+from langchain.memory import ConversationSummaryBufferMemory
+from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage # Import message types
+from typing import List, Optional # For type hinting
+
+# --- Custom LLM Class with Qwen Token Counter ---
+class QwenTokenCountingChatOpenAI(ChatOpenAI):
+    """
+    A custom ChatOpenAI subclass that implements token counting for Qwen models
+    using the HuggingFace transformers tokenizer.
+    """
+    tokenizer: AutoTokenizer = None # Will be loaded in __init__
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Load the Qwen tokenizer. Use your specific model path/name if different.
+        # Example: self.tokenizer = AutoTokenizer.from_pretrained("/path/to/your/Qwen-72B-Instruct-AWQ")
+        
+        # --- DEBUG PRINT ---
+        print(f"\n--- Initializing QwenTokenCountingChatOpenAI with model: {self.model_name} ---")
+
+        if self.tokenizer is None: # Only load once if not already provided
+            try:
+                # Try loading the tokenizer specific to your Qwen model
+                # Make sure this matches the exact model name or path you have
+                tokenizer_name_or_path = "Qwen/Qwen2.5-32B-Instruct" # Adjust this if your Qwen model has a different name/path
+                print(f"Attempting to load tokenizer from: {tokenizer_name_or_path}")
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
+                print("Tokenizer loaded successfully.")
+            except Exception as e:
+                print(f"ERROR: Could not load Qwen tokenizer from '{tokenizer_name_or_path}': {e}")
+                print("Token counting will be inaccurate or fail. Please ensure the model path/name is correct.")
+                # Fallback to a generic tokenizer for a very rough estimate if Qwen specific one fails
+                self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased") # Fallback
+        
+        # Ensure the tokenizer has a chat template, or provide a simple one
+        if not hasattr(self.tokenizer, 'apply_chat_template') or self.tokenizer.chat_template is None:
+            print("Warning: Qwen tokenizer does not have a chat template. Using a simple default.")
+            self.tokenizer.chat_template = (
+                "{% for message in messages %}"
+                "{% if message['role'] == 'user' %}"
+                "{{ '<|im_start|>user\n' + message['content'] + '<|im_end|>\n' }}"
+                "{% elif message['role'] == 'assistant' %}"
+                "{{ '<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' }}"
+                "{% elif message['role'] == 'system' %}"
+                "{{ '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}"
+                "{% else %}"
+                "{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' }}"
+                "{% endif %}"
+                "{% endfor %}"
+                "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+            )
+
+
+    def _get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
+        """
+        Calculates the number of tokens in a list of messages using the Qwen tokenizer.
+        """
+        # --- DEBUG PRINT ---
+        print(f"\n--- Calling _get_num_tokens_from_messages for {self.model_name} ---")
+        print(f"Messages received: {messages}")
+
+        if self.tokenizer is None:
+            print("ERROR: Tokenizer is None, cannot count tokens accurately.")
+            return sum(len(msg.content.split()) for msg in messages) # Fallback if tokenizer failed to load
+
+        hf_messages = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                hf_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                hf_messages.append({"role": "assistant", "content": msg.content})
+            else: # SystemMessage or other
+                hf_messages.append({"role": msg.type, "content": msg.content})
+
+        try:
+            token_ids = self.tokenizer.apply_chat_template(
+                hf_messages,
+                tokenize=True,
+                add_generation_prompt=True
+            )
+            num_tokens = len(token_ids)
+            print(f"Calculated {num_tokens} tokens.")
+            return num_tokens
+        except Exception as e:
+            print(f"ERROR during token counting in custom method: {e}")
+            print("Falling back to rough token estimate based on content.")
+            return sum(len(msg.content.split()) for msg in messages)
+
+
+# --- Rest of your code ---
+
+# --- Part 1: Setting Up the "Tools" ---
+
+embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+doc_vectorstore = FAISS.from_documents(
+    [
+        Document(page_content="The Amazon rainforest is located in South America."),
+        Document(page_content="The Amazon river is the largest river by discharge volume."),
+        Document(page_content="The sun is a star. It is in the center of the solar system.")
+    ],
+    embeddings
+)
+retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
+
+# --- IMPORTANT CHANGE HERE: Use your custom LLM class ---
+llm = QwenTokenCountingChatOpenAI( # Use your new custom class!
+    model="Qwen/Qwen2.5-32B-Instruct", # Or the exact name/path of your Qwen model
+    openai_api_base="http://localhost:8000/v1",
+    openai_api_key="EMPTY",
+    max_tokens=2048,
+    stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
+)
+
+# --- DEBUG PRINT ---
+print(f"LLM instance type assigned to 'llm': {type(llm)}")
+
+
+# --- Part 2: The Memory Manager and RAG Chain ---
+
+# The memory manager is a separate object that we will update manually
+memory_manager = ConversationSummaryBufferMemory(
+    llm=llm, # This LLM now has a custom token counter!
+    max_token_limit=1024,
+    return_messages=True
+)
+
+# --- DEBUG PRINT ---
+print(f"LLM instance type inside memory_manager: {type(memory_manager.llm)}")
+
+
+# The base chain now correctly takes history as an input
 base_rag_chain = (
-    {"context": retriever, "question": RunnablePassthrough()}
-    | RunnableLambda(print_output)  # Add the debug step here!
-    | rag_prompt
+    {
+        "context": itemgetter("question") | retriever,
+        "question": itemgetter("question"),
+        "history": itemgetter("history")
+    }
+    | RunnableLambda(lambda x: {"context": format_docs(x["context"]), "question": x["question"], "history": x["history"]})
+    | ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant. Use the following retrieved context and conversation history to answer the question."),
+        MessagesPlaceholder("history"),
+        ("human", "Question: {question}\nContext: {context}")
+    ])
     | llm
     | StrOutputParser()
 )
+
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+# --- Part 3: The Main Execution Loop ---
+
+async def main():
+    print("\nWelcome to the RAG chatbot with summary memory! Type 'exit' to quit.")
+
+    while True:
+        question = input("You: ")
+        if question.lower() == 'exit':
+            break
+
+        # Step 1: Load the current history from the memory manager
+        history = memory_manager.load_memory_variables({})["history"]
+        
+        # Step 2: Invoke the chain with the current question and history
+        response = await base_rag_chain.ainvoke({"question": question, "history": history})
+        
+        # Step 3: Save the current turn to the memory
+        memory_manager.save_context(
+            {"input": question},
+            {"output": response}
+        )
+
+        print("Bot: ", end="", flush=True)
+        print(response)
+
+if __name__ == "__main__":
+    asyncio.run(main())
