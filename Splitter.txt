@@ -1,212 +1,25 @@
-import os
-import asyncio
-from operator import itemgetter
-
-# --- Install if you haven't: pip install transformers duckduckgo-search numexpr ---
-from transformers import AutoTokenizer
-
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
-from langchain.memory import ConversationSummaryBufferMemory # Still using this
-from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from typing import List, Optional
 
-# --- NEW IMPORTS FOR AGENTS & TOOLS ---
-from langchain.agents import AgentExecutor, create_react_agent, Tool # Tool for custom wrapper
-from langchain_community.tools import DuckDuckGoSearchRun # Web search tool
-from langchain.chains import LLMMathChain # Calculator tool
-
-
-# --- Custom LLM Class with Qwen Token Counter (UNCHANGED) ---
-class QwenTokenCountingChatOpenAI(ChatOpenAI):
-    tokenizer: AutoTokenizer = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if self.tokenizer is None:
-            tokenizer_name_or_path = "Qwen/Qwen1.5-72B-Chat-AWQ" # ADJUST THIS if needed
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
-            except Exception as e:
-                print(f"ERROR: Could not load Qwen tokenizer from '{tokenizer_name_or_path}': {e}")
-                self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        
-        if not hasattr(self.tokenizer, 'apply_chat_template') or self.tokenizer.chat_template is None:
-            self.tokenizer.chat_template = (
-                "{% for message in messages %}"
-                "{% if message['role'] == 'user' %}"
-                "{{ '<|im_start|>user\n' + message['content'] + '<|im_end|>\n' }}"
-                "{% elif message['role'] == 'assistant' %}"
-                "{{ '<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' }}"
-                "{% elif message['role'] == 'system' %}"
-                "{{ '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}"
-                "{% else %}"
-                "{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' }}"
-                "{% endif %}"
-                "{% endfor %}"
-                "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
-            )
-
-    def _get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
-        if self.tokenizer is None:
-            return sum(len(msg.content.split()) for msg in messages)
-
-        hf_messages = []
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                hf_messages.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                hf_messages.append({"role": "assistant", "content": msg.content})
-            else:
-                hf_messages.append({"role": msg.type, "content": msg.content})
-
-        try:
-            token_ids = self.tokenizer.apply_chat_template(
-                hf_messages,
-                tokenize=True,
-                add_generation_prompt=True
-            )
-            return len(token_ids)
-        except Exception as e:
-            return sum(len(msg.content.split()) for msg in messages)
-
-# --- Part 1: Setting Up the "Tools" ---
-
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-doc_vectorstore = FAISS.from_documents(
-    [
-        Document(page_content="The Amazon rainforest is located in South America."),
-        Document(page_content="The Amazon river is the largest river by discharge volume."),
-        Document(page_content="The sun is a star. It is in the center of the solar system.")
-    ],
-    embeddings
-)
-retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
-
-llm = QwenTokenCountingChatOpenAI(
-    model="qwen-72b-awq", # ADJUST THIS if needed
-    openai_api_base="http://localhost:8000/v1",
-    openai_api_key="EMPTY",
-    max_tokens=2048,
-    stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
-)
-
-# --- Global Memory Manager (In-Memory) ---
-# This memory will reset every time you restart the script.
-# It's good for single-session testing of agents.
-memory_manager = ConversationSummaryBufferMemory(
-    llm=llm, # Your custom LLM with token counting
-    max_token_limit=1024, # Adjust based on your model's context
-    return_messages=True # Crucial for agents to use message history
-)
-
-
-# --- 2. Define the Tools for the Agent ---
-# General Web Search Tool
-search_tool = DuckDuckGoSearchRun(name="web_search", description="Useful for answering questions about current events or general knowledge not in my database.")
-
-# Calculator Tool
-math_chain = LLMMathChain.from_llm(llm=llm, verbose=False)
-calculator_tool = Tool(
-    name="Calculator",
-    func=math_chain.run,
-    description="Useful for when you need to answer questions about math. This tool is only for math questions and nothing else. Input should be a mathematical expression or a simple math problem."
-)
-
-# Your RAG system as a custom tool
-# This chain is specifically for the tool, taking only 'question' as input.
-rag_tool_chain = (
-    {
-        "context": itemgetter("question") | retriever,
-        "question": itemgetter("question"),
-        "history": RunnableLambda(lambda x: []) # Empty history for tool context
-    }
-    | RunnableLambda(lambda x: {"context": format_docs(x["context"]), "question": x["question"], "history": x["history"]})
-    | ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant. Use the following retrieved context to answer the question."),
-        ("human", "Question: {question}\nContext: {context}")
-    ])
-    | llm
-    | StrOutputParser()
-)
-
-# Use the @tool decorator for a cleaner custom tool definition
-from langchain.tools import tool # Import tool decorator explicitly
-
-@tool
-def knowledge_base_search(query: str) -> str:
-    """
-    Useful for answering questions specifically about [Your_Domain_Here, e.g., Amazon Rainforest, solar system, general facts about the world].
-    Input should be the question to search for in the knowledge base.
-    """
-    # Invoke the simplified RAG chain designed for tool use
-    return rag_tool_chain.invoke({"question": query})
-
-# List of all tools for the agent
-tools = [search_tool, calculator_tool, knowledge_base_search]
-
-
-# --- 3. Create the Agent Executor ---
 agent_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
                "You should only use the tools if necessary to answer the user's question.\n"
-               "If a question is about the Amazon rainforest, the Amazon river, or the solar system, prioritize using the `knowledge_base_search` tool.\n" # Guide the agent
-               "You can also answer general conversational questions without tools."),
-    MessagesPlaceholder(variable_name="chat_history"), # For conversational memory
+               "If a question is about the Amazon rainforest, the Amazon river, or the solar system, prioritize using the `knowledge_base_search` tool.\n"
+               "You can also answer general conversational questions without tools.\n"
+               "\n" # Added a newline for clarity
+               "Use the following format:\n\n" # This is important for ReAct agents
+               "Question: the input question you must answer\n"
+               "Thought: you should always think about what to do\n"
+               "Action: the action to take, should be one of [{tool_names}]\n" # <--- **FIXED LINE**
+               "Action Input: the input to the action\n"
+               "Observation: the result of the action\n"
+               "...\n" # Ellipsis indicates multiple steps
+               "Thought: I now know the final answer\n"
+               "Final Answer: the final answer to the original input question"),
+    MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad") # For agent's internal thoughts and tool outputs
+    MessagesPlaceholder(variable_name="agent_scratchpad")
 ])
 
-agent = create_react_agent(llm=llm, tools=tools, prompt=agent_prompt)
-
-# This will be the main runnable for your chatbot interaction
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=tools,
-    verbose=True, # Set to True to see the agent's thought process
-    handle_parsing_errors=True # Important for robustness
-)
-
-
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
-
-
-# --- Part 3: The Main Execution Loop (Slightly Modified for Agent) ---
-
-async def main():
-    print("Welcome to the Chatbot with Agents and In-Memory Summary! Type 'exit' to quit.")
-
-    while True:
-        question = input("You: ")
-        if question.lower() == 'exit':
-            break
-
-        # Load the current history from the memory manager
-        history = memory_manager.load_memory_variables({})["history"]
-        
-        # Invoke the agent_executor with the current question and history
-        # The agent_executor expects 'input' and 'chat_history' as input keys
-        try:
-            result = await agent_executor.ainvoke({"input": question, "chat_history": history})
-            response = result["output"] # AgentExecutor output is typically in 'output' key
-        except Exception as e:
-            print(f"An error occurred during agent execution: {e}")
-            response = "I apologize, but I encountered an error trying to process that request."
-        
-        # Save the current turn to the memory
-        memory_manager.save_context(
-            {"input": question},
-            {"output": response}
-        )
-
-        print("Bot: ", end="", flush=True)
-        print(response)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# The rest of your code for creating agent and agent_executor remains the same:
+# agent = create_react_agent(llm=llm, tools=tools, prompt=agent_prompt)
+# agent_executor = AgentExecutor(...)
