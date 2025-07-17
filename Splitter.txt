@@ -2,7 +2,7 @@ import os
 import asyncio
 from operator import itemgetter
 
-# --- Install if you haven't: pip install transformers ---
+# --- Install if you haven't: pip install transformers duckduckgo-search numexpr ---
 from transformers import AutoTokenizer
 
 from langchain_community.vectorstores import FAISS
@@ -11,44 +11,32 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
-from langchain.memory import ConversationSummaryBufferMemory
+from langchain.memory import ConversationSummaryBufferMemory # Still using this
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage # Import message types
-from typing import List, Optional # For type hinting
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from typing import List, Optional
 
-# --- Custom LLM Class with Qwen Token Counter ---
+# --- NEW IMPORTS FOR AGENTS & TOOLS ---
+from langchain.agents import AgentExecutor, create_react_agent, Tool # Tool for custom wrapper
+from langchain_community.tools import DuckDuckGoSearchRun # Web search tool
+from langchain.chains import LLMMathChain # Calculator tool
+
+
+# --- Custom LLM Class with Qwen Token Counter (UNCHANGED) ---
 class QwenTokenCountingChatOpenAI(ChatOpenAI):
-    """
-    A custom ChatOpenAI subclass that implements token counting for Qwen models
-    using the HuggingFace transformers tokenizer.
-    """
-    tokenizer: AutoTokenizer = None # Will be loaded in __init__
+    tokenizer: AutoTokenizer = None
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Load the Qwen tokenizer. Use your specific model path/name if different.
-        # Example: self.tokenizer = AutoTokenizer.from_pretrained("/path/to/your/Qwen-72B-Instruct-AWQ")
-        
-        # --- DEBUG PRINT ---
-        print(f"\n--- Initializing QwenTokenCountingChatOpenAI with model: {self.model_name} ---")
-
-        if self.tokenizer is None: # Only load once if not already provided
+        if self.tokenizer is None:
+            tokenizer_name_or_path = "Qwen/Qwen1.5-72B-Chat-AWQ" # ADJUST THIS if needed
             try:
-                # Try loading the tokenizer specific to your Qwen model
-                # Make sure this matches the exact model name or path you have
-                tokenizer_name_or_path = "Qwen/Qwen2.5-32B-Instruct" # Adjust this if your Qwen model has a different name/path
-                print(f"Attempting to load tokenizer from: {tokenizer_name_or_path}")
                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
-                print("Tokenizer loaded successfully.")
             except Exception as e:
                 print(f"ERROR: Could not load Qwen tokenizer from '{tokenizer_name_or_path}': {e}")
-                print("Token counting will be inaccurate or fail. Please ensure the model path/name is correct.")
-                # Fallback to a generic tokenizer for a very rough estimate if Qwen specific one fails
-                self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased") # Fallback
+                self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
         
-        # Ensure the tokenizer has a chat template, or provide a simple one
         if not hasattr(self.tokenizer, 'apply_chat_template') or self.tokenizer.chat_template is None:
-            print("Warning: Qwen tokenizer does not have a chat template. Using a simple default.")
             self.tokenizer.chat_template = (
                 "{% for message in messages %}"
                 "{% if message['role'] == 'user' %}"
@@ -64,18 +52,9 @@ class QwenTokenCountingChatOpenAI(ChatOpenAI):
                 "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
             )
 
-
     def _get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
-        """
-        Calculates the number of tokens in a list of messages using the Qwen tokenizer.
-        """
-        # --- DEBUG PRINT ---
-        print(f"\n--- Calling _get_num_tokens_from_messages for {self.model_name} ---")
-        print(f"Messages received: {messages}")
-
         if self.tokenizer is None:
-            print("ERROR: Tokenizer is None, cannot count tokens accurately.")
-            return sum(len(msg.content.split()) for msg in messages) # Fallback if tokenizer failed to load
+            return sum(len(msg.content.split()) for msg in messages)
 
         hf_messages = []
         for msg in messages:
@@ -83,7 +62,7 @@ class QwenTokenCountingChatOpenAI(ChatOpenAI):
                 hf_messages.append({"role": "user", "content": msg.content})
             elif isinstance(msg, AIMessage):
                 hf_messages.append({"role": "assistant", "content": msg.content})
-            else: # SystemMessage or other
+            else:
                 hf_messages.append({"role": msg.type, "content": msg.content})
 
         try:
@@ -92,16 +71,9 @@ class QwenTokenCountingChatOpenAI(ChatOpenAI):
                 tokenize=True,
                 add_generation_prompt=True
             )
-            num_tokens = len(token_ids)
-            print(f"Calculated {num_tokens} tokens.")
-            return num_tokens
+            return len(token_ids)
         except Exception as e:
-            print(f"ERROR during token counting in custom method: {e}")
-            print("Falling back to rough token estimate based on content.")
             return sum(len(msg.content.split()) for msg in messages)
-
-
-# --- Rest of your code ---
 
 # --- Part 1: Setting Up the "Tools" ---
 
@@ -116,69 +88,118 @@ doc_vectorstore = FAISS.from_documents(
 )
 retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
 
-# --- IMPORTANT CHANGE HERE: Use your custom LLM class ---
-llm = QwenTokenCountingChatOpenAI( # Use your new custom class!
-    model="Qwen/Qwen2.5-32B-Instruct", # Or the exact name/path of your Qwen model
+llm = QwenTokenCountingChatOpenAI(
+    model="qwen-72b-awq", # ADJUST THIS if needed
     openai_api_base="http://localhost:8000/v1",
     openai_api_key="EMPTY",
     max_tokens=2048,
     stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
 )
 
-# --- DEBUG PRINT ---
-print(f"LLM instance type assigned to 'llm': {type(llm)}")
-
-
-# --- Part 2: The Memory Manager and RAG Chain ---
-
-# The memory manager is a separate object that we will update manually
+# --- Global Memory Manager (In-Memory) ---
+# This memory will reset every time you restart the script.
+# It's good for single-session testing of agents.
 memory_manager = ConversationSummaryBufferMemory(
-    llm=llm, # This LLM now has a custom token counter!
-    max_token_limit=1024,
-    return_messages=True
+    llm=llm, # Your custom LLM with token counting
+    max_token_limit=1024, # Adjust based on your model's context
+    return_messages=True # Crucial for agents to use message history
 )
 
-# --- DEBUG PRINT ---
-print(f"LLM instance type inside memory_manager: {type(memory_manager.llm)}")
 
+# --- 2. Define the Tools for the Agent ---
+# General Web Search Tool
+search_tool = DuckDuckGoSearchRun(name="web_search", description="Useful for answering questions about current events or general knowledge not in my database.")
 
-# The base chain now correctly takes history as an input
-base_rag_chain = (
+# Calculator Tool
+math_chain = LLMMathChain.from_llm(llm=llm, verbose=False)
+calculator_tool = Tool(
+    name="Calculator",
+    func=math_chain.run,
+    description="Useful for when you need to answer questions about math. This tool is only for math questions and nothing else. Input should be a mathematical expression or a simple math problem."
+)
+
+# Your RAG system as a custom tool
+# This chain is specifically for the tool, taking only 'question' as input.
+rag_tool_chain = (
     {
         "context": itemgetter("question") | retriever,
         "question": itemgetter("question"),
-        "history": itemgetter("history")
+        "history": RunnableLambda(lambda x: []) # Empty history for tool context
     }
     | RunnableLambda(lambda x: {"context": format_docs(x["context"]), "question": x["question"], "history": x["history"]})
     | ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant. Use the following retrieved context and conversation history to answer the question."),
-        MessagesPlaceholder("history"),
+        ("system", "You are a helpful assistant. Use the following retrieved context to answer the question."),
         ("human", "Question: {question}\nContext: {context}")
     ])
     | llm
     | StrOutputParser()
 )
 
+# Use the @tool decorator for a cleaner custom tool definition
+from langchain.tools import tool # Import tool decorator explicitly
+
+@tool
+def knowledge_base_search(query: str) -> str:
+    """
+    Useful for answering questions specifically about [Your_Domain_Here, e.g., Amazon Rainforest, solar system, general facts about the world].
+    Input should be the question to search for in the knowledge base.
+    """
+    # Invoke the simplified RAG chain designed for tool use
+    return rag_tool_chain.invoke({"question": query})
+
+# List of all tools for the agent
+tools = [search_tool, calculator_tool, knowledge_base_search]
+
+
+# --- 3. Create the Agent Executor ---
+agent_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
+               "You should only use the tools if necessary to answer the user's question.\n"
+               "If a question is about the Amazon rainforest, the Amazon river, or the solar system, prioritize using the `knowledge_base_search` tool.\n" # Guide the agent
+               "You can also answer general conversational questions without tools."),
+    MessagesPlaceholder(variable_name="chat_history"), # For conversational memory
+    ("human", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad") # For agent's internal thoughts and tool outputs
+])
+
+agent = create_react_agent(llm=llm, tools=tools, prompt=agent_prompt)
+
+# This will be the main runnable for your chatbot interaction
+agent_executor = AgentExecutor(
+    agent=agent,
+    tools=tools,
+    verbose=True, # Set to True to see the agent's thought process
+    handle_parsing_errors=True # Important for robustness
+)
+
+
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
-# --- Part 3: The Main Execution Loop ---
+
+# --- Part 3: The Main Execution Loop (Slightly Modified for Agent) ---
 
 async def main():
-    print("\nWelcome to the RAG chatbot with summary memory! Type 'exit' to quit.")
+    print("Welcome to the Chatbot with Agents and In-Memory Summary! Type 'exit' to quit.")
 
     while True:
         question = input("You: ")
         if question.lower() == 'exit':
             break
 
-        # Step 1: Load the current history from the memory manager
+        # Load the current history from the memory manager
         history = memory_manager.load_memory_variables({})["history"]
         
-        # Step 2: Invoke the chain with the current question and history
-        response = await base_rag_chain.ainvoke({"question": question, "history": history})
+        # Invoke the agent_executor with the current question and history
+        # The agent_executor expects 'input' and 'chat_history' as input keys
+        try:
+            result = await agent_executor.ainvoke({"input": question, "chat_history": history})
+            response = result["output"] # AgentExecutor output is typically in 'output' key
+        except Exception as e:
+            print(f"An error occurred during agent execution: {e}")
+            response = "I apologize, but I encountered an error trying to process that request."
         
-        # Step 3: Save the current turn to the memory
+        # Save the current turn to the memory
         memory_manager.save_context(
             {"input": question},
             {"output": response}
