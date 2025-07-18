@@ -1,12 +1,15 @@
 import os
 import asyncio
 from operator import itemgetter
-from typing import List, Optional, Any
+from typing import List, Optional, Any, TypedDict, Union, Annotated
 from functools import partial
+
+# --- LangGraph Imports ---
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolExecutor, ToolInvocation
 
 # --- Agent and Tool Specific Imports ---
 from langchain_community.tools import DuckDuckGoSearchRun
-from langchain.agents import AgentExecutor
 from langchain.tools import Tool, tool
 from langchain.chains import LLMMathChain
 
@@ -26,6 +29,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, System
 # --- Imports for manual agent construction ---
 from langchain.agents.format_scratchpad import format_log_to_messages
 from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain_core.agents import AgentAction, AgentFinish
 
 
 # --- Custom LLM Class with Qwen Token Counter ---
@@ -117,7 +121,7 @@ llm = QwenTokenCountingChatOpenAI(
     openai_api_base="http://localhost:8000/v1",
     openai_api_key="EMPTY",
     max_tokens=2048,
-    temperature=0.0, # Keep at 0.0 for strict adherence
+    temperature=0.0,
     stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
 )
 print("LLM ready.")
@@ -125,6 +129,9 @@ print("LLM ready.")
 
 # --- 3. Memory Setup (In-Memory Summary Buffer) ---
 print("Setting up memory manager (in-memory)...")
+# Note: Memory will now be managed by LangGraph state and explicitly updated.
+# This ConversationSummaryBufferMemory is still useful for *summarizing* history,
+# but the raw chat_history will be in the graph state.
 memory_manager = ConversationSummaryBufferMemory(
     llm=llm,
     max_token_limit=1024,
@@ -158,6 +165,8 @@ def knowledge_base_search(query: str) -> str:
     Always prioritize using this tool for factual questions that seem
     like they should be in the bot's existing documents.
     """
+    # In LangGraph, chat_history will be part of the graph state, not directly loaded here.
+    # However, for the internal RAG tool's prompt, we can still use the *overall* history from memory.
     history_messages = memory_manager.load_memory_variables({})["chat_history"]
 
     rag_tool_chain = (
@@ -167,7 +176,7 @@ def knowledge_base_search(query: str) -> str:
         )
         | ChatPromptTemplate.from_messages([
             ("system", "You are a helpful AI assistant. Use the following retrieved context to answer the question. "
-                       "If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n"
+                       "Provide a comprehensive and helpful answer based on the context. If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n"
                        "Retrieved Context:\n{context}\n\n"
                        "Chat History:\n{history}"),
             ("human", "{question}")
@@ -180,10 +189,13 @@ def knowledge_base_search(query: str) -> str:
     return result
 
 tools = [search_tool, calculator_tool, knowledge_base_search]
+# LangGraph uses a ToolExecutor to run tools
+tool_executor = ToolExecutor(tools)
 print("Tools defined:", [t.name for t in tools])
 
 
 # --- 5. Define the Agent Prompt (FINAL REFINEMENT) ---
+# This prompt will be used within the LLM node of the graph.
 agent_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
                "You should only use the tools if necessary and for factual information. "
@@ -191,7 +203,7 @@ agent_prompt = ChatPromptTemplate.from_messages([
                "and 'web_search' for current events or general knowledge.\n"
                "\n"
                "**IMPORTANT INSTRUCTIONS:**\n"
-               "Follow this exact format for your responses strictly and do not deviate. **You must generate only ONE logical step per turn.**\n\n" # Reinforced
+               "Follow this exact format for your responses strictly and do not deviate. **You must generate only ONE logical step per turn.**\n\n"
                "Question: the input question you must answer\n"
                "Thought: you should always think about what to do\n"
                "Action: the action to take, should be one of [{tool_names}]\n"
@@ -199,12 +211,13 @@ agent_prompt = ChatPromptTemplate.from_messages([
                "Observation: the result of the action\n"
                "...\n"
                "Thought: I now know the final answer\n"
-               "**Final Answer: <YOUR_FINAL_ANSWER_GOES_HERE>**\n\n"
+               "**Final Answer: <YOUR_FINAL_ANSWER_AS_A_HELPFUL_SENTENCE_GOES_HERE>**\n\n"
+               "**FORMATTING INSTRUCTION:** Your final answer should always be a complete, clear, and helpful sentence that directly addresses the user's original question. Do not just output raw data, numbers, or single words unless the question specifically asks for only that.\n\n"
                "**CRITICAL:**\n"
-               "1. If you decide to use a tool, your entire output for this turn MUST end immediately after 'Action Input: <tool_input>'.\n" # Very explicit
-               "2. If you know the final answer, your entire output for this turn MUST end immediately after 'Final Answer: <final_answer>'.\n" # Very explicit
-               "DO NOT generate 'Observation:' or any further 'Thought:' or 'Action:' after an 'Action Input:' unless it's a new turn after an Observation.\n" # Prevents over-generation
-               "DO NOT generate any content after 'Final Answer:'."), # Prevents generation after final answer
+               "1. If you decide to use a tool, your entire output for this turn MUST end immediately after 'Action Input: <tool_input>'.\n"
+               "2. If you know the final answer, your entire output for this turn MUST end immediately after 'Final Answer: <final_answer>'. **This is your absolute final response and the agent will stop.**\n"
+               "DO NOT generate 'Observation:' or any further 'Thought:' or 'Action:' after an 'Action Input:' unless it's a new turn after an Observation.\n"
+               "DO NOT generate any content after 'Final Answer:'."),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}"),
     MessagesPlaceholder(variable_name="agent_scratchpad")
@@ -212,64 +225,136 @@ agent_prompt = ChatPromptTemplate.from_messages([
 print("Agent prompt template ready.")
 
 
-# --- Debugging Function for agent_scratchpad (Optional) ---
-def debug_scratchpad_type(input_dict: dict) -> dict:
-    scratchpad_value = input_dict.get("agent_scratchpad")
-    print("\n--- DEBUG: agent_scratchpad BEFORE prompt usage ---")
-    print(f"Value: {scratchpad_value!r}")
-    print(f"Type: {type(scratchpad_value)}")
-    if isinstance(scratchpad_value, list):
-        print(f"Is list of BaseMessage: {all(isinstance(msg, BaseMessage) for msg in scratchpad_value)}")
-    else:
-        print("Not a list.")
-    print("--------------------------------------------------\n")
-    return input_dict
+# --- LangGraph Specific Components ---
 
-# --- NEW Debugging Function for LLM Output ---
-def debug_llm_output(llm_response: Any) -> Any:
-    output_content = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-    print("\n--- DEBUG: Raw LLM Output Before Parsing ---")
-    print(f"Type of LLM Response Object: {type(llm_response)}")
-    print(f"Content: {output_content!r}")
-    print("------------------------------------------\n")
-    return llm_response
+# 1. Define the Agent State
+class AgentState(TypedDict):
+    input: str
+    chat_history: List[BaseMessage]
+    agent_outcome: Union[AgentAction, AgentFinish, None] # Output of the LLM node
+    intermediate_steps: Annotated[List[tuple[AgentAction, str]], itemgetter("intermediate_steps")] # List of (action, observation) tuples
 
-# --- 6. Create the Agent and Executor (FIXED VERSION) ---
-print("Creating agent and executor...")
+# 2. Define Nodes
 
-agent_chain = (
-    RunnablePassthrough.assign(
-        agent_scratchpad=lambda x: format_log_to_messages(x["intermediate_steps"]),
-        tools=lambda x: x["tools"],
-        tool_names=lambda x: [t.name for t in x["tools"]],
-        chat_history=lambda x: x["chat_history"],
-        input=lambda x: x["input"],
+# Node for LLM invocation and parsing
+def run_llm(state: AgentState):
+    """
+    Invokes the LLM with the current prompt and parses its output into AgentAction or AgentFinish.
+    """
+    print("\n--- NODE: run_llm ---")
+    current_chat_history = state["chat_history"]
+    current_input = state["input"]
+    current_intermediate_steps = state["intermediate_steps"]
+
+    # Format the intermediate steps into messages for the agent_scratchpad
+    formatted_scratchpad = format_log_to_messages(current_intermediate_steps)
+
+    # Prepare input for the LLM chain
+    llm_input = {
+        "input": current_input,
+        "chat_history": current_chat_history,
+        "agent_scratchpad": formatted_scratchpad,
+        "tools": tools, # Tools are passed to the prompt formatter
+        "tool_names": [t.name for t in tools] # Tool names are passed to the prompt formatter
+    }
+
+    # The LangChain Runnable for LLM invocation and parsing
+    agent_runnable = (
+        agent_prompt
+        | llm.bind(stop=["\nObservation:"]) # Keep the crucial stop token here
+        | ReActSingleInputOutputParser()
     )
-    | RunnableLambda(debug_scratchpad_type)
-    | agent_prompt
-    # ***CRITICAL MODIFICATION: Reintroducing precise stop sequences***
-    # These stops tell the LLM to cut off generation *immediately* if it produces these strings.
-    # The order matters for the LLM's generation process.
-    # \nObservation: - stops AFTER Action Input, before Observation begins
-    # \nFinal Answer: - stops AFTER Final Answer, preventing extra thoughts/actions
-    | llm.bind(stop=["\nObservation:", "\nFinal Answer:", "Final Answer:"]) 
-    | RunnableLambda(debug_llm_output)
-    | ReActSingleInputOutputParser() 
-)
+
+    # Invoke the LLM
+    agent_outcome = agent_runnable.invoke(llm_input)
+    print(f"LLM Output (parsed): {agent_outcome}")
+
+    # Return the updated state
+    return {"agent_outcome": agent_outcome}
+
+# Node for tool execution
+async def execute_tool(state: AgentState):
+    """
+    Executes the tool specified by agent_outcome and updates intermediate_steps.
+    """
+    print("\n--- NODE: execute_tool ---")
+    agent_action = state["agent_outcome"]
+    tool_name = agent_action.tool
+    tool_input = agent_action.tool_input
+
+    print(f"Executing Tool: {tool_name} with Input: {tool_input}")
+
+    # ToolInvocation is used by ToolExecutor
+    invocation = ToolInvocation(tool=tool_name, tool_input=tool_input)
+    
+    try:
+        observation = await tool_executor.ainvoke(invocation)
+        print(f"Tool Observation: {observation}")
+    except Exception as e:
+        observation = f"Tool execution error: {e}"
+        print(f"Tool Error: {observation}")
+
+    # Append the (action, observation) to intermediate_steps
+    new_intermediate_step = (agent_action, observation)
+    
+    # LangGraph state updates are typically immutable, so we create a new list
+    updated_intermediate_steps = state["intermediate_steps"] + [new_intermediate_step]
+
+    # Return the updated state
+    return {"intermediate_steps": updated_intermediate_steps}
 
 
-agent_executor = AgentExecutor(
-    agent=agent_chain,
-    tools=tools,
-    verbose=True,
-    handle_parsing_errors=True
+# 3. Define the Graph
+
+# Conditional edge function: Decides the next step based on LLM's output
+def decide_next_step(state: AgentState):
+    """
+    Decides whether the agent should continue by executing a tool or finish.
+    """
+    print("\n--- NODE: decide_next_step (Conditional) ---")
+    agent_outcome = state["agent_outcome"]
+
+    if isinstance(agent_outcome, AgentFinish):
+        print("Decision: AgentFinish (END)")
+        return END # Terminates the graph
+    else:
+        print("Decision: AgentAction (call_tool)")
+        return "call_tool" # Transitions to the execute_tool node
+
+
+# Build the LangGraph graph
+workflow = StateGraph(AgentState)
+
+# Add nodes to the graph
+workflow.add_node("call_llm", run_llm)
+workflow.add_node("call_tool", execute_tool)
+
+# Set the entry point
+workflow.set_entry_point("call_llm")
+
+# Define edges
+# From call_llm, go to decide_next_step (a conditional edge)
+workflow.add_conditional_edges(
+    "call_llm", # From this node
+    decide_next_step, # Use this function to decide next node
+    {
+        "call_tool": "call_tool", # If decide_next_step returns "call_tool", go to call_tool node
+        END: END # If decide_next_step returns END, terminate
+    }
 )
-print("Agent executor ready.")
+
+# From call_tool, always go back to call_llm (to get the next Thought/Action based on Observation)
+workflow.add_edge("call_tool", "call_llm")
+
+# Compile the graph
+app = workflow.compile()
+
+print("\nLangGraph application compiled.")
 
 
 # --- 7. Main Asynchronous Execution Loop ---
 async def main():
-    print("\nWelcome to the RAG Chatbot with Agents and In-Memory Summary! Type 'exit' to quit.")
+    print("\nWelcome to the RAG Chatbot with Agents and In-Memory Summary (LangGraph)! Type 'exit' to quit.")
     print("This memory will reset each time the script is restarted.\n")
 
     while True:
@@ -278,19 +363,39 @@ async def main():
             break
 
         print("Bot: ", end="", flush=True)
-        
-        history_for_agent = memory_manager.load_memory_variables({})["chat_history"]
+
+        # Retrieve chat history from memory manager
+        # LangGraph will manage intermediate_steps internally
+        initial_chat_history = memory_manager.load_memory_variables({})["chat_history"]
+
+        # Prepare initial state for the graph
+        inputs = {
+            "input": question,
+            "chat_history": initial_chat_history,
+            "intermediate_steps": [], # Start with empty intermediate steps
+            "agent_outcome": None # Initial state has no agent outcome yet
+        }
 
         full_response_content = ""
         try:
-            async for chunk in agent_executor.astream(
-                {"input": question, "chat_history": history_for_agent, "tools": tools, "tool_names": [t.name for t in tools]}
-            ):
-                if "output" in chunk:
-                    print(chunk["output"], end="", flush=True)
-                    full_response_content += chunk["output"]
-            print()
+            # Iterate through the graph's execution steps
+            async for s in app.astream(inputs):
+                # LangGraph outputs the state after each node execution
+                # The 'agent_outcome' will be populated when the LLM node runs
+                if "agent_outcome" in s and s["agent_outcome"] is not None:
+                    if isinstance(s["agent_outcome"], AgentFinish):
+                        # This is the final answer, print it and break the stream
+                        final_answer_message = s["agent_outcome"].return_values["output"]
+                        print(final_answer_message, end="", flush=True)
+                        full_response_content = final_answer_message
+                        break # Exit the streaming loop as we have the final answer
 
+                # For intermediate steps, print based on verbosity if needed
+                # (The node print statements already provide good verbosity)
+
+            print() # Newline after response
+
+            # Save context to memory manager for summarization/future use
             memory_manager.save_context(
                 {"input": question},
                 {"output": full_response_content}
