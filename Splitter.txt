@@ -6,7 +6,8 @@ from functools import partial
 
 # --- Agent and Tool Specific Imports ---
 from langchain_community.tools import DuckDuckGoSearchRun
-from langchain.agents import AgentExecutor, create_react_agent
+# REMOVE: from langchain.agents import AgentExecutor, create_react_agent # We'll build manually
+from langchain.agents import AgentExecutor # Keep AgentExecutor
 from langchain.tools import Tool, tool
 from langchain.chains import LLMMathChain
 
@@ -23,6 +24,11 @@ from langchain.memory import ConversationSummaryBufferMemory
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 
+# --- Imports for manual agent construction ---
+from langchain.agents.format_scratchpad import format_log_to_messages
+from langchain.agents.output_parsers import ReActAgentAction, ReActAgentFinish # Import the parsers
+
+
 # --- Custom LLM Class with Qwen Token Counter (UNCHANGED) ---
 class QwenTokenCountingChatOpenAI(ChatOpenAI):
     tokenizer: AutoTokenizer = None
@@ -30,16 +36,13 @@ class QwenTokenCountingChatOpenAI(ChatOpenAI):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if self.tokenizer is None:
-            # Use the exact tokenizer name you are using for your Qwen model
-            tokenizer_name_or_path = "Qwen/Qwen1.5-72B-Chat-AWQ" # !!! ADJUST THIS if needed !!!
+            tokenizer_name_or_path = "Qwen/Qwen1.5-72B-Chat-AWQ"
             try:
                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
             except Exception as e:
                 print(f"ERROR: Could not load Qwen tokenizer from '{tokenizer_name_or_path}': {e}")
-                # Fallback to a generic tokenizer if Qwen's isn't found
                 self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
         
-        # Ensure chat_template is set for Qwen models
         if not hasattr(self.tokenizer, 'apply_chat_template') or self.tokenizer.chat_template is None:
             self.tokenizer.chat_template = (
                 "{% for message in messages %}"
@@ -58,7 +61,6 @@ class QwenTokenCountingChatOpenAI(ChatOpenAI):
 
     def _get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
         if self.tokenizer is None:
-            # Fallback for token counting if tokenizer fails
             return sum(len(msg.content.split()) for msg in messages)
 
         hf_messages = []
@@ -112,7 +114,7 @@ print("RAG components ready.")
 # --- 2. LLM Initialization (UNCHANGED) ---
 print("Initializing LLM...")
 llm = QwenTokenCountingChatOpenAI(
-    model="qwen-72b-awq", # !!! ADJUST THIS if needed !!!
+    model="qwen-72b-awq",
     openai_api_base="http://localhost:8000/v1",
     openai_api_key="EMPTY",
     max_tokens=2048,
@@ -127,22 +129,20 @@ print("Setting up memory manager (in-memory)...")
 memory_manager = ConversationSummaryBufferMemory(
     llm=llm,
     max_token_limit=1024,
-    return_messages=True, # Important for agent history
-    memory_key="chat_history" # Key for the history in the agent prompt
+    return_messages=True,
+    memory_key="chat_history"
 )
 print("Memory manager ready.")
 
 
-# --- 4. Define Tools for the Agent ---
+# --- 4. Define Tools for the Agent (UNCHANGED) ---
 print("Defining tools for the agent...")
 
-# Tool 1: Web Search
 search_tool = DuckDuckGoSearchRun(
     name="web_search",
     description="Useful for answering questions about current events or general knowledge that is NOT in the provided knowledge base."
 )
 
-# Tool 2: Calculator
 math_chain = LLMMathChain.from_llm(llm=llm, verbose=False)
 calculator_tool = Tool(
     name="Calculator",
@@ -150,11 +150,6 @@ calculator_tool = Tool(
     description="Useful for when you need to answer questions about math or perform calculations."
 )
 
-# Tool 3: Your RAG Knowledge Base as a Tool
-# We need to wrap the RAG chain into a tool.
-# The RAG chain needs access to history and current question to generate context.
-# We'll create a function that replicates the RAG chain's core logic.
-# Use @tool decorator for simpler tool definition
 @tool
 def knowledge_base_search(query: str) -> str:
     """
@@ -164,28 +159,24 @@ def knowledge_base_search(query: str) -> str:
     Always prioritize using this tool for factual questions that seem
     like they should be in the bot's existing documents.
     """
-    # Load history from memory, as the RAG chain might need it for context
     history_messages = memory_manager.load_memory_variables({})["chat_history"]
 
-    # Reconstruct a simplified RAG chain for the tool's purpose
-    # This chain will only focus on context retrieval and then LLM generation
     rag_tool_chain = (
         RunnablePassthrough.assign(
             context=itemgetter("question") | retriever | format_docs,
-            history=RunnableLambda(lambda x: history_messages) # Pass the loaded history
+            history=RunnableLambda(lambda x: history_messages)
         )
         | ChatPromptTemplate.from_messages([
             ("system", "You are a helpful AI assistant. Use the following retrieved context to answer the question. "
                        "If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n"
                        "Retrieved Context:\n{context}\n\n"
-                       "Chat History:\n{history}"), # Include history in the RAG tool's prompt
+                       "Chat History:\n{history}"),
             ("human", "{question}")
         ])
         | llm
         | StrOutputParser()
     )
     
-    # Invoke the RAG tool chain with the query
     result = rag_tool_chain.invoke({"question": query})
     return result
 
@@ -193,9 +184,7 @@ tools = [search_tool, calculator_tool, knowledge_base_search]
 print("Tools defined:", [t.name for t in tools])
 
 
-# --- 5. Define the Agent Prompt ---
-# This is the crucial part that sets up the ReAct prompt for the agent.
-# It includes placeholders for tools, tool names, chat history, and the agent's scratchpad.
+# --- 5. Define the Agent Prompt (UNCHANGED) ---
 agent_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
                "You should only use the tools if necessary and for factual information. "
@@ -208,30 +197,70 @@ agent_prompt = ChatPromptTemplate.from_messages([
                "Action: the action to take, should be one of [{tool_names}]\n"
                "Action Input: the input to the action\n"
                "Observation: the result of the action\n"
-               "...\n" # This "..." indicates potential multiple Thought/Action/Observation cycles
+               "...\n"
                "Thought: I now know the final answer\n"
                "Final Answer: the final answer to the original input question"),
-    MessagesPlaceholder(variable_name="chat_history"), # Placeholder for past conversation history
-    ("human", "{input}"), # Placeholder for the current user's question
-    MessagesPlaceholder(variable_name="agent_scratchpad") # This is where the agent's thoughts/actions go
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad")
 ])
 print("Agent prompt template ready.")
 
 
-# --- 6. Create the Agent and Executor ---
-print("Creating agent and executor...")
-agent = create_react_agent(llm=llm, tools=tools, prompt=agent_prompt)
+# --- Debugging Function ---
+def debug_scratchpad_type(input_dict: dict) -> dict:
+    """
+    Prints the type and value of 'agent_scratchpad' just before it's passed to the prompt.
+    """
+    scratchpad_value = input_dict.get("agent_scratchpad")
+    print("\n--- DEBUG: agent_scratchpad BEFORE prompt usage ---")
+    print(f"Value: {scratchpad_value!r}") # Use !r for raw representation
+    print(f"Type: {type(scratchpad_value)}")
+    if isinstance(scratchpad_value, list):
+        print(f"Is list of BaseMessage: {all(isinstance(msg, BaseMessage) for msg in scratchpad_value)}")
+    else:
+        print("Not a list.")
+    print("--------------------------------------------------\n")
+    return input_dict
+
+# --- 6. Create the Agent and Executor (MODIFIED for debugging) ---
+print("Creating agent and executor (with debug)...")
+
+# Manually construct the agent chain to insert the debug step
+# This chain mirrors what create_react_agent does internally:
+# 1. Takes input dict (including intermediate_steps)
+# 2. Formats intermediate_steps into a list of BaseMessage for agent_scratchpad
+# 3. Passes formatted inputs to the prompt
+# 4. LLM processes the prompt
+# 5. Parses LLM output into AgentAction or AgentFinish
+
+agent_chain = (
+    RunnablePassthrough.assign(
+        # This part ensures agent_scratchpad is populated from intermediate_steps
+        agent_scratchpad=lambda x: format_log_to_messages(x["intermediate_steps"]),
+        # Other inputs needed by the prompt template
+        tools=lambda x: x["tools"],
+        tool_names=lambda x: x["tool_names"],
+        chat_history=lambda x: x["chat_history"],
+        input=lambda x: x["input"],
+    )
+    | RunnableLambda(debug_scratchpad_type) # <-- OUR DEBUGGING STEP IS HERE
+    | agent_prompt # <-- This is where agent_scratchpad is used by the template
+    | llm.bind(stop=["\nObservation"]) # Common stop sequence for ReAct
+    | ReActAgentAction.parse_all # Parses LLM output into actions/finishes
+)
+
 
 agent_executor = AgentExecutor(
-    agent=agent,
+    agent=agent_chain, # Use our manually built chain
     tools=tools,
-    verbose=True, # Set to True to see the agent's thought process
-    handle_parsing_errors=True # Crucial for robustness if LLM output isn't perfect
+    verbose=True,
+    handle_parsing_errors=True
 )
 print("Agent executor ready.")
 
 
-# --- 7. Main Asynchronous Execution Loop ---
+# --- 7. Main Asynchronous Execution Loop (UNCHANGED) ---
 async def main():
     print("\nWelcome to the RAG Chatbot with Agents and In-Memory Summary! Type 'exit' to quit.")
     print("This memory will reset each time the script is restarted.\n")
@@ -243,26 +272,20 @@ async def main():
 
         print("Bot: ", end="", flush=True)
         
-        # Load chat history from memory before invoking the agent
-        # The agent_executor needs the chat_history explicitly
         history_for_agent = memory_manager.load_memory_variables({})["chat_history"]
 
         full_response_content = ""
         try:
-            # Astream from agent_executor. It yields different types of chunks.
             async for chunk in agent_executor.astream(
-                {"input": question, "chat_history": history_for_agent}
+                {"input": question, "chat_history": history_for_agent, "tools": tools, "tool_names": [t.name for t in tools]}
+                # Note: 'tools' and 'tool_names' are also passed explicitly to agent_executor
+                # for the prompt's initial rendering, though RunnablePassthrough also provides them.
             ):
-                # The agent_executor.astream() yields dictionaries.
-                # We are interested in the 'output' key for the final answer.
                 if "output" in chunk:
                     print(chunk["output"], end="", flush=True)
                     full_response_content += chunk["output"]
-                # You can add more logic here to display thoughts/actions if verbose=False
-                # For verbose=True, LangChain's AgentExecutor already prints step-by-step.
-            print() # Add a newline after the streamed response
+            print()
 
-            # Save the current turn to the memory manager
             memory_manager.save_context(
                 {"input": question},
                 {"output": full_response_content}
@@ -272,7 +295,6 @@ async def main():
             print(f"\nAn error occurred: {e}")
             full_response_content = "I apologize, but I encountered an error trying to process that request."
             print(full_response_content)
-            # Still save context to memory even if an error occurred
             memory_manager.save_context(
                 {"input": question},
                 {"output": full_response_content}
