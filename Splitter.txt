@@ -6,8 +6,7 @@ from functools import partial
 
 # --- Agent and Tool Specific Imports ---
 from langchain_community.tools import DuckDuckGoSearchRun
-# REMOVE: from langchain.agents import AgentExecutor, create_react_agent # We'll build manually
-from langchain.agents import AgentExecutor # Keep AgentExecutor
+from langchain.agents import AgentExecutor
 from langchain.tools import Tool, tool
 from langchain.chains import LLMMathChain
 
@@ -26,10 +25,10 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, System
 
 # --- Imports for manual agent construction ---
 from langchain.agents.format_scratchpad import format_log_to_messages
-from langchain.agents.output_parsers import ReActAgentAction, ReActAgentFinish # Import the parsers
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
 
 
-# --- Custom LLM Class with Qwen Token Counter (UNCHANGED) ---
+# --- Custom LLM Class with Qwen Token Counter ---
 class QwenTokenCountingChatOpenAI(ChatOpenAI):
     tokenizer: AutoTokenizer = None
 
@@ -86,12 +85,12 @@ class QwenTokenCountingChatOpenAI(ChatOpenAI):
             return sum(len(msg.content.split()) for msg in messages)
 
 
-# --- Helper Function for Formatting Retrieved Documents (UNCHANGED) ---
+# --- Helper Function for Formatting Retrieved Documents ---
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-# --- 1. RAG Setup: Embeddings, Vector Store, and Retriever (UNCHANGED) ---
+# --- 1. RAG Setup: Embeddings, Vector Store, and Retriever ---
 print("Setting up RAG components...")
 embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 doc_vectorstore = FAISS.from_documents(
@@ -111,7 +110,7 @@ retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
 print("RAG components ready.")
 
 
-# --- 2. LLM Initialization (UNCHANGED) ---
+# --- 2. LLM Initialization ---
 print("Initializing LLM...")
 llm = QwenTokenCountingChatOpenAI(
     model="qwen-72b-awq",
@@ -124,7 +123,7 @@ llm = QwenTokenCountingChatOpenAI(
 print("LLM ready.")
 
 
-# --- 3. Memory Setup (In-Memory Summary Buffer) (UNCHANGED) ---
+# --- 3. Memory Setup (In-Memory Summary Buffer) ---
 print("Setting up memory manager (in-memory)...")
 memory_manager = ConversationSummaryBufferMemory(
     llm=llm,
@@ -135,7 +134,7 @@ memory_manager = ConversationSummaryBufferMemory(
 print("Memory manager ready.")
 
 
-# --- 4. Define Tools for the Agent (UNCHANGED) ---
+# --- 4. Define Tools for the Agent ---
 print("Defining tools for the agent...")
 
 search_tool = DuckDuckGoSearchRun(
@@ -184,7 +183,7 @@ tools = [search_tool, calculator_tool, knowledge_base_search]
 print("Tools defined:", [t.name for t in tools])
 
 
-# --- 5. Define the Agent Prompt (UNCHANGED) ---
+# --- 5. Define the Agent Prompt ---
 agent_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
                "You should only use the tools if necessary and for factual information. "
@@ -207,14 +206,11 @@ agent_prompt = ChatPromptTemplate.from_messages([
 print("Agent prompt template ready.")
 
 
-# --- Debugging Function ---
+# --- Debugging Function for agent_scratchpad (Optional) ---
 def debug_scratchpad_type(input_dict: dict) -> dict:
-    """
-    Prints the type and value of 'agent_scratchpad' just before it's passed to the prompt.
-    """
     scratchpad_value = input_dict.get("agent_scratchpad")
     print("\n--- DEBUG: agent_scratchpad BEFORE prompt usage ---")
-    print(f"Value: {scratchpad_value!r}") # Use !r for raw representation
+    print(f"Value: {scratchpad_value!r}")
     print(f"Type: {type(scratchpad_value)}")
     if isinstance(scratchpad_value, list):
         print(f"Is list of BaseMessage: {all(isinstance(msg, BaseMessage) for msg in scratchpad_value)}")
@@ -223,44 +219,49 @@ def debug_scratchpad_type(input_dict: dict) -> dict:
     print("--------------------------------------------------\n")
     return input_dict
 
-# --- 6. Create the Agent and Executor (MODIFIED for debugging) ---
-print("Creating agent and executor (with debug)...")
+# --- NEW Debugging Function for LLM Output ---
+def debug_llm_output(llm_response: Any) -> Any:
+    """
+    Prints the raw output from the LLM before it is parsed by ReActSingleInputOutputParser.
+    This helps determine if the LLM is generating the 'Final Answer:' correctly.
+    """
+    # Assuming llm_response is a BaseMessage or has a .content attribute
+    output_content = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+    print("\n--- DEBUG: Raw LLM Output Before Parsing ---")
+    print(f"Type of LLM Response Object: {type(llm_response)}")
+    print(f"Content: {output_content!r}") # Use !r for raw representation
+    print("------------------------------------------\n")
+    return llm_response # Pass the original response object along
 
-# Manually construct the agent chain to insert the debug step
-# This chain mirrors what create_react_agent does internally:
-# 1. Takes input dict (including intermediate_steps)
-# 2. Formats intermediate_steps into a list of BaseMessage for agent_scratchpad
-# 3. Passes formatted inputs to the prompt
-# 4. LLM processes the prompt
-# 5. Parses LLM output into AgentAction or AgentFinish
+# --- 6. Create the Agent and Executor ---
+print("Creating agent and executor...")
 
 agent_chain = (
     RunnablePassthrough.assign(
-        # This part ensures agent_scratchpad is populated from intermediate_steps
         agent_scratchpad=lambda x: format_log_to_messages(x["intermediate_steps"]),
-        # Other inputs needed by the prompt template
         tools=lambda x: x["tools"],
-        tool_names=lambda x: x["tool_names"],
+        tool_names=lambda x: [t.name for t in x["tools"]],
         chat_history=lambda x: x["chat_history"],
         input=lambda x: x["input"],
     )
-    | RunnableLambda(debug_scratchpad_type) # <-- OUR DEBUGGING STEP IS HERE
-    | agent_prompt # <-- This is where agent_scratchpad is used by the template
-    | llm.bind(stop=["\nObservation"]) # Common stop sequence for ReAct
-    | ReActAgentAction.parse_all # Parses LLM output into actions/finishes
+    | RunnableLambda(debug_scratchpad_type) # Debug for prompt inputs
+    | agent_prompt
+    | llm.bind(stop=["\nObservation"]) # Stop token for the LLM to signal action/thought
+    | RunnableLambda(debug_llm_output) # <-- NEW DEBUG: See what LLM actually generated
+    | ReActSingleInputOutputParser() # Parses LLM output into AgentAction/AgentFinish
 )
 
 
 agent_executor = AgentExecutor(
-    agent=agent_chain, # Use our manually built chain
+    agent=agent_chain,
     tools=tools,
-    verbose=True,
+    verbose=True, # Keep verbose=True to see the agent's full thought process
     handle_parsing_errors=True
 )
 print("Agent executor ready.")
 
 
-# --- 7. Main Asynchronous Execution Loop (UNCHANGED) ---
+# --- 7. Main Asynchronous Execution Loop ---
 async def main():
     print("\nWelcome to the RAG Chatbot with Agents and In-Memory Summary! Type 'exit' to quit.")
     print("This memory will reset each time the script is restarted.\n")
@@ -278,8 +279,6 @@ async def main():
         try:
             async for chunk in agent_executor.astream(
                 {"input": question, "chat_history": history_for_agent, "tools": tools, "tool_names": [t.name for t in tools]}
-                # Note: 'tools' and 'tool_names' are also passed explicitly to agent_executor
-                # for the prompt's initial rendering, though RunnablePassthrough also provides them.
             ):
                 if "output" in chunk:
                     print(chunk["output"], end="", flush=True)
