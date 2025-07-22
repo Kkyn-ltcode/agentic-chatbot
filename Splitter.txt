@@ -1,258 +1,198 @@
-import os
-import asyncio
-from operator import itemgetter
-from typing import List, Optional, Any, TypedDict, Union, Annotated
-from functools import partial
+import React, { useState, useEffect, useRef } from 'react';
 
-# --- LangGraph Imports ---
-from langgraph.graph import StateGraph, END
+// Main App component
+const App = () => {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null); // Ref for textarea to auto-resize
 
-# --- Core LangChain Imports ---
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
-from langchain.memory import ConversationSummaryBufferMemory
-from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+  // Scroll to the bottom of the chat when new messages arrive
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
-# --- Specific to Qwen Token Counting ---
-from transformers import AutoTokenizer
-
-
-# --- Custom LLM Class with Qwen Token Counter (same as before) ---
-class QwenTokenCountingChatOpenAI(ChatOpenAI):
-    tokenizer: AutoTokenizer = None
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if self.tokenizer is None:
-            tokenizer_name_or_path = "Qwen/Qwen1.5-72B-Chat-AWQ"
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
-            except Exception as e:
-                print(f"ERROR: Could not load Qwen tokenizer from '{tokenizer_name_or_path}': {e}")
-                self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        
-        if not hasattr(self.tokenizer, 'apply_chat_template') or self.tokenizer.chat_template is None:
-            self.tokenizer.chat_template = (
-                "{% for message in messages %}"
-                "{% if message['role'] == 'user' %}"
-                "{{ '<|im_start|>user\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% elif message['role'] == 'assistant' %}"
-                "{{ '<|im_start|>assistant\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% elif message['role'] == 'system' %}"
-                "{{ '<|im_start|>system\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% else %}"
-                "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% endif %}"
-                "{% endfor %}"
-                "{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
-            )
-
-    def _get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
-        if self.tokenizer is None:
-            return sum(len(msg.content.split()) for msg in messages)
-
-        hf_messages = []
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                hf_messages.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                hf_messages.append({"role": "assistant", "content": msg.content})
-            elif isinstance(msg, SystemMessage):
-                hf_messages.append({"role": "system", "content": msg.content})
-            else:
-                hf_messages.append({"role": msg.type, "content": msg.content})
-
-        try:
-            token_ids = self.tokenizer.apply_chat_template(
-                hf_messages,
-                tokenize=True,
-                add_generation_prompt=True
-            )
-            return len(token_ids)
-        except Exception as e:
-            print(f"Warning: Failed to apply chat template for token counting: {e}. Falling back to word count.")
-            return sum(len(msg.content.split()) for msg in messages)
-
-
-# --- Helper Function for Formatting Retrieved Documents (same as before) ---
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
-
-
-# --- 1. RAG Setup: Embeddings, Vector Store, and Retriever (same as before) ---
-print("Setting up RAG components...")
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-doc_vectorstore = FAISS.from_documents(
-    [
-        Document(page_content="The Amazon rainforest is located in South America."),
-        Document(page_content="The Amazon river is the largest river by discharge volume."),
-        Document(page_content="The sun is a star. It is in the center of the solar system."),
-        Document(page_content="The Earth orbits the sun in an elliptical path."),
-        Document(page_content="Photosynthesis is the process by which plants convert light energy into chemical energy."),
-        Document(page_content="The capital of France is Paris."),
-        Document(page_content="The Eiffel Tower is located in Paris."),
-        Document(page_content="Mount Everest is the highest mountain in the world.")
-    ],
-    embeddings
-)
-retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
-print("RAG components ready.")
-
-
-# --- 2. LLM Initialization (same as before) ---
-print("Initializing LLM...")
-llm = QwenTokenCountingChatOpenAI(
-    model="qwen-72b-awq",
-    openai_api_base="http://localhost:8000/v1",
-    openai_api_key="EMPTY",
-    max_tokens=2048,
-    temperature=0.0,
-    stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
-)
-print("LLM ready.")
-
-
-# --- 3. Memory Setup (In-Memory Summary Buffer - same as before) ---
-print("Setting up memory manager (in-memory)...")
-memory_manager = ConversationSummaryBufferMemory(
-    llm=llm,
-    max_token_limit=1024,
-    return_messages=True,
-    memory_key="chat_history"
-)
-print("Memory manager ready.")
-
-
-# --- 4. Define the RAG Prompt (SIMPLIFIED for no agents/tools) ---
-# This prompt guides the LLM on how to answer based on context and history.
-rag_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful AI assistant. Use the following retrieved context to answer the question.\n"
-               "Provide a comprehensive and helpful answer based on the context. If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n"
-               "Retrieved Context:\n{context}\n\n"
-               "Chat History:\n{history}\n\n"
-               "Answer the user's question clearly and concisely."), # Added a direct instruction
-    MessagesPlaceholder(variable_name="chat_history_for_prompt"), # Will be filled from graph state
-    ("human", "{input}") # User's current input
-])
-print("RAG prompt template ready.")
-
-
-# --- LangGraph Specific Components ---
-
-# 1. Define the Graph State
-# This will be the dict that flows through our graph
-class GraphState(TypedDict):
-    input: str # The user's current input
-    chat_history: List[BaseMessage] # Full chat history
-    response: str # The final response generated by the LLM
-
-# 2. Define the Node(s)
-def generate_rag_response(state: GraphState) -> GraphState:
-    """
-    Node that retrieves context, formats the prompt, invokes the LLM,
-    and updates the state with the generated response.
-    """
-    print("\n--- NODE: generate_rag_response ---")
-    current_input = state["input"]
-    current_chat_history = state["chat_history"]
-
-    # Perform RAG retrieval
-    retrieved_docs = retriever.invoke(current_input)
-    formatted_context = format_docs(retrieved_docs)
-
-    # Prepare input for the RAG chain
-    rag_chain_input = {
-        "input": current_input,
-        "context": formatted_context,
-        "chat_history_for_prompt": current_chat_history # Pass chat_history to the prompt
+  // Auto-resize textarea based on content
+  const adjustTextareaHeight = () => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'; // Reset height
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`; // Set to scroll height
     }
+  };
 
-    # Construct the RAG chain (prompt | llm | parser)
-    rag_chain = rag_prompt | llm | StrOutputParser()
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
-    # Invoke the chain
-    response_content = rag_chain.invoke(rag_chain_input)
-    print(f"Generated Response: {response_content}")
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [input]); // Adjust height whenever input changes
 
-    # Update the state with the generated response
-    return {"response": response_content}
+  // Simulate bot response or integrate with backend
+  const handleSendMessage = async () => {
+    if (input.trim() === '') return;
 
+    const userMessage = { id: Date.now(), text: input, sender: 'user' };
+    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    setInput(''); // Clear input immediately
+    setIsTyping(true);
 
-# 3. Build the LangGraph Graph
-print("Building LangGraph workflow...")
-workflow = StateGraph(GraphState)
+    // --- Backend Integration Placeholder ---
+    // In a real application, you would make a fetch call to your Python backend here.
+    // Example:
+    /*
+    try {
+      const response = await fetch('http://localhost:5000/chat', { // Replace with your backend URL
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: userMessage.text, chat_history: messages }), // Send current message and history
+      });
+      const data = await response.json();
+      const botResponse = data.response; // Assuming your backend returns { "response": "..." }
+      setMessages((prevMessages) => [...prevMessages, { id: Date.now() + 1, text: botResponse, sender: 'bot' }]);
+    } catch (error) {
+      console.error('Error communicating with backend:', error);
+      setMessages((prevMessages) => [...prevMessages, { id: Date.now() + 1, text: "Oops! Something went wrong. Please try again.", sender: 'bot' }]);
+    } finally {
+      setIsTyping(false);
+    }
+    */
 
-# Add the single node
-workflow.add_node("generate_response", generate_rag_response)
+    // --- Simulated Bot Response (for demo purposes) ---
+    // Replace this with your actual backend call.
+    setTimeout(() => {
+      const botResponse = `I received your message: "${userMessage.text}". I am a RAG chatbot with memory. How can I assist you further today?`;
+      setMessages((prevMessages) => [...prevMessages, { id: Date.now() + 1, text: botResponse, sender: 'bot' }]);
+      setIsTyping(false);
+    }, 1500); // Simulate network delay
+  };
 
-# Set the entry point to our response generation node
-workflow.set_entry_point("generate_response")
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for new line
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
 
-# From the generate_response node, always end the graph execution
-workflow.add_edge("generate_response", END)
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4 font-inter text-gray-800">
+      <div className="flex flex-col w-full max-w-3xl h-[90vh] bg-white rounded-xl shadow-2xl overflow-hidden border border-gray-200">
+        {/* Chat Header */}
+        <div className="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+          <h1 className="text-xl font-semibold text-gray-700">Your AI Assistant</h1>
+          {/* Optional: Add a subtle status indicator */}
+          <span className="text-xs text-gray-500">Online</span>
+        </div>
 
-# Compile the graph
-app = workflow.compile()
-print("LangGraph workflow compiled.")
+        {/* Chat Messages Area */}
+        <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-white">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-12 h-12 mb-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h.375m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h.375" />
+              </svg>
+              <p className="text-lg">Start a new conversation</p>
+              <p className="text-sm mt-1">Ask me anything!</p>
+            </div>
+          )}
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${
+                msg.sender === 'user' ? 'justify-end' : 'justify-start'
+              }`}
+            >
+              <div
+                className={`max-w-[80%] p-3 rounded-xl shadow-sm leading-relaxed text-sm ${
+                  msg.sender === 'user'
+                    ? 'bg-blue-500 text-white rounded-br-none' // User bubble
+                    : 'bg-gray-100 text-gray-800 rounded-bl-none' // Bot bubble
+                }`}
+                style={{
+                  boxShadow: msg.sender === 'user' ? '0 2px 4px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)',
+                  // Subtle border for bot message to make it stand out against white background
+                  border: msg.sender === 'bot' ? '1px solid rgba(0,0,0,0.05)' : 'none'
+                }}
+              >
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          {isTyping && (
+            <div className="flex justify-start">
+              <div className="max-w-[80%] p-3 rounded-xl shadow-sm bg-gray-100 text-gray-800 rounded-bl-none"
+                   style={{ border: '1px solid rgba(0,0,0,0.05)' }}>
+                <div className="flex space-x-1">
+                  <span className="animate-pulse-dot bg-gray-400 w-2 h-2 rounded-full"></span>
+                  <span className="animate-pulse-dot-delay bg-gray-400 w-2 h-2 rounded-full"></span>
+                  <span className="animate-pulse-dot-delay-more bg-gray-400 w-2 h-2 rounded-full"></span>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} /> {/* Scroll target */}
+        </div>
 
+        {/* Chat Input Area */}
+        <div className="p-4 bg-gray-50 border-t border-gray-200 flex items-end space-x-3 rounded-b-xl">
+          <textarea
+            ref={textareaRef}
+            className="flex-1 p-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none overflow-hidden placeholder-gray-400 text-sm bg-white shadow-inner"
+            placeholder="Send a message..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={handleKeyPress}
+            rows="1" // Start with one row
+            style={{ minHeight: '48px', maxHeight: '160px' }} // Min/max height for textarea
+          />
+          <button
+            className="bg-blue-600 text-white p-3 rounded-xl shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200 flex-shrink-0 flex items-center justify-center"
+            onClick={handleSendMessage}
+            disabled={isTyping || input.trim() === ''}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth="1.5"
+              stroke="currentColor"
+              className="w-6 h-6"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
 
-# --- 5. Main Asynchronous Execution Loop ---
-async def main():
-    print("\nWelcome to the RAG Chatbot with Memory (LangGraph)! Type 'exit' to quit.")
-    print("This memory will reset each time the script is restarted.\n")
-
-    while True:
-        question = input("You: ")
-        if question.lower() == 'exit':
-            break
-
-        print("Bot: ", end="", flush=True)
-        
-        # Load chat history from memory for the *initial* state of the graph
-        initial_chat_history = memory_manager.load_memory_variables({})["chat_history"]
-
-        # Prepare initial state for the graph
-        inputs = {
-            "input": question,
-            "chat_history": initial_chat_history,
-            "response": "" # Initialize response as empty
+      {/* Tailwind CSS Customizations (for animations and font) */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        .font-inter {
+          font-family: 'Inter', sans-serif;
         }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
+        .animate-pulse-dot {
+          animation: pulse-dot 1.5s infinite;
+        }
+        .animate-pulse-dot-delay {
+          animation: pulse-dot 1.5s infinite 0.2s;
+        }
+        .animate-pulse-dot-delay-more {
+          animation: pulse-dot 1.5s infinite 0.4s;
+        }
+      `}</style>
+    </div>
+  );
+};
 
-        full_response_content = ""
-        try:
-            # Stream through the graph execution
-            # For this simple graph, there's only one step.
-            # The 's' here represents the full state after a node runs.
-            async for s in app.astream(inputs):
-                # We are interested in the 'response' key from the final state.
-                # In this simple graph, the 'generate_response' node directly
-                # outputs the final response to the state.
-                if "response" in s and s["response"]:
-                    print(s["response"], end="", flush=True)
-                    full_response_content = s["response"]
-                    break # Break after the response is generated as it's the only step
-
-            print() # Newline after response
-
-            # Save the full turn to memory manager
-            memory_manager.save_context(
-                {"input": question},
-                {"output": full_response_content}
-            )
-
-        except Exception as e:
-            print(f"\nAn error occurred: {e}")
-            full_response_content = "I apologize, but I encountered an error trying to process that request."
-            print(full_response_content)
-            memory_manager.save_context(
-                {"input": question},
-                {"output": full_response_content}
-            )
-
-if __name__ == "__main__":
-    asyncio.run(main())
+export default App;
