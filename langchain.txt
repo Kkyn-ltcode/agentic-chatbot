@@ -1,233 +1,32 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG Chatbot UI</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React and ReactDOM CDNs -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel CDN for JSX transformation in the browser -->
-    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Custom CSS for Inter font and animations -->
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f9fafb; /* Light gray background */
-        }
-        /* Custom animations for typing indicator */
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 1; }
-        }
-        .animate-pulse-dot {
-            animation: pulse-dot 1.5s infinite;
-        }
-        .animate-pulse-dot-delay {
-            animation: pulse-dot 1.5s infinite 0.2s;
-        }
-        .animate-pulse-dot-delay-more {
-            animation: pulse-dot 1.5s infinite 0.4s;
-        }
-        /* Ensure textarea auto-resizes correctly */
-        textarea {
-            box-sizing: border-box; /* Include padding and border in the element's total width and height */
-        }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
-
-    <!-- Your React App component embedded here -->
-    <script type="text/babel">
-        // Main App component
-        const App = () => {
-            const [messages, setMessages] = React.useState([]);
-            const [input, setInput] = React.useState('');
-            const [isTyping, setIsTyping] = React.useState(false);
-            const messagesEndRef = React.useRef(null);
-            const textareaRef = React.useRef(null); // Ref for textarea to auto-resize
-
-            // Scroll to the bottom of the chat when new messages arrive
-            const scrollToBottom = () => {
-                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-            };
-
-            // Auto-resize textarea based on content
-            const adjustTextareaHeight = () => {
-                if (textareaRef.current) {
-                    textareaRef.current.style.height = 'auto'; // Reset height
-                    textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`; // Set to scroll height
-                }
-            };
-
-            React.useEffect(() => {
-                scrollToBottom();
-            }, [messages]);
-
-            React.useEffect(() => {
-                adjustTextareaHeight();
-            }, [input]); // Adjust height whenever input changes
-
-            // Handle sending messages to the backend
-            const handleSendMessage = async () => {
-                if (input.trim() === '') return;
-
-                const userMessage = { id: Date.now(), text: input, sender: 'user' };
-                setMessages((prevMessages) => [...prevMessages, userMessage]);
-                setInput(''); // Clear input immediately
-                setIsTyping(true);
-
-                // --- Backend Integration ---
-                try {
-                    // *** IMPORTANT: This is the updated fetch URL for Kubeflow Jupyter proxy ***
-                    // It assumes your FastAPI backend is running on port 8080 inside the Jupyter container.
-                    // If this path doesn't work, you might need to consult your specific Kubeflow proxy setup.
-                    const response = await fetch('/user-redirect/proxy/8080/chat', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        // Send the user's message and the current chat history to the backend
-                        body: JSON.stringify({ message: userMessage.text, chat_history: messages }),
-                    });
-
-                    // Check if the HTTP response was successful
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(`HTTP error! Status: ${response.status}, Detail: ${errorData.detail || 'Unknown error'}`);
-                    }
-
-                    const data = await response.json();
-                    const botResponse = data.response; // Assuming your backend returns { "response": "..." }
-                    setMessages((prevMessages) => [...prevMessages, { id: Date.now() + 1, text: botResponse, sender: 'bot' }]);
-                } catch (error) {
-                    console.error('Error communicating with backend:', error);
-                    setMessages((prevMessages) => [...prevMessages, { id: Date.now() + 1, text: `Oops! Could not connect to the AI. Error: ${error.message}` }]);
-                } finally {
-                    setIsTyping(false);
-                }
-
-                // --- Simulated Bot Response (COMMENTED OUT) ---
-                // This block is now commented out as we are connecting to the backend.
-                /*
-                setTimeout(() => {
-                    const botResponse = `I received your message: "${userMessage.text}". I am a RAG chatbot with memory. How can I assist you further today?`;
-                    setMessages((prevMessages) => [...prevMessages, { id: Date.now() + 1, text: botResponse, sender: 'bot' }]);
-                    setIsTyping(false);
-                }, 1500);
-                */
-            };
-
-            const handleKeyPress = (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for new line
-                    e.preventDefault();
-                    handleSendMessage();
-                }
-            };
-
-            return (
-                <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4 font-inter text-gray-800">
-                    <div className="flex flex-col w-full max-w-3xl h-[90vh] bg-white rounded-xl shadow-2xl overflow-hidden border border-gray-200">
-                        {/* Chat Header */}
-                        <div className="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                            <h1 className="text-xl font-semibold text-gray-700">Your AI Assistant</h1>
-                            {/* Optional: Add a subtle status indicator */}
-                            <span className="text-xs text-gray-500">Online</span>
-                        </div>
-
-                        {/* Chat Messages Area */}
-                        <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-white">
-                            {messages.length === 0 && (
-                                <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-12 h-12 mb-4">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h.375m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h.375" />
-                                    </svg>
-                                    <p className="text-lg">Start a new conversation</p>
-                                    <p className="text-sm mt-1">Ask me anything!</p>
-                                </div>
-                            )}
-                            {messages.map((msg) => (
-                                <div
-                                    key={msg.id}
-                                    className={`flex ${
-                                        msg.sender === 'user' ? 'justify-end' : 'justify-start'
-                                    }`}
-                                >
-                                    <div
-                                        className={`max-w-[80%] p-3 rounded-xl shadow-sm leading-relaxed text-sm ${
-                                            msg.sender === 'user'
-                                                ? 'bg-blue-500 text-white rounded-br-none'
-                                                : 'bg-gray-100 text-gray-800 rounded-bl-none'
-                                        }`}
-                                        style={{
-                                            boxShadow: msg.sender === 'user' ? '0 2px 4px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)',
-                                            border: msg.sender === 'bot' ? '1px solid rgba(0,0,0,0.05)' : 'none'
-                                        }}
-                                    >
-                                        {msg.text}
-                                    </div>
-                                </div>
-                            ))}
-                            {isTyping && (
-                                <div className="flex justify-start">
-                                    <div className="max-w-[80%] p-3 rounded-xl shadow-sm bg-gray-100 text-gray-800 rounded-bl-none"
-                                        style={{ border: '1px solid rgba(0,0,0,0.05)' }}>
-                                        <div className="flex space-x-1">
-                                            <span className="animate-pulse-dot bg-gray-400 w-2 h-2 rounded-full"></span>
-                                            <span className="animate-pulse-dot-delay bg-gray-400 w-2 h-2 rounded-full"></span>
-                                            <span className="animate-pulse-dot-delay-more bg-gray-400 w-2 h-2 rounded-full"></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                            <div ref={messagesEndRef} /> {/* Scroll target */}
-                        </div>
-
-                        {/* Chat Input Area */}
-                        <div className="p-4 bg-gray-50 border-t border-gray-200 flex items-end space-x-3 rounded-b-xl">
-                            <textarea
-                                ref={textareaRef}
-                                className="flex-1 p-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none overflow-hidden placeholder-gray-400 text-sm bg-white shadow-inner"
-                                placeholder="Send a message..."
-                                value={input}
-                                onChange={(e) => setInput(e.target.value)}
-                                onKeyPress={handleKeyPress}
-                                rows="1"
-                                style={{ minHeight: '48px', maxHeight: '160px' }}
-                            />
-                            <button
-                                className="bg-blue-600 text-white p-3 rounded-xl shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200 flex-shrink-0 flex items-center justify-center"
-                                onClick={handleSendMessage}
-                                disabled={isTyping || input.trim() === ''}
-                            >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    strokeWidth="1.5"
-                                    stroke="currentColor"
-                                    className="w-6 h-6"
-                                >
-                                    <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"
-                                    />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        // Render the App component into the 'root' div
-        ReactDOM.render(<App />, document.getElementById('root'));
-    </script>
-</body>
-</html>
+{
+  "name": "kubeflow-chatbot-ui",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.4",
+    "firebase": "^10.12.3"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "react-scripts": "^5.0.1"
+  }
+}
