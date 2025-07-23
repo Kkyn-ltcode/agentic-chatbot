@@ -1,11 +1,1 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './index.css'; // This will be empty, but react-scripts expects it
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
