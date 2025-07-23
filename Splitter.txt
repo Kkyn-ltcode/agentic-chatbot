@@ -1,9 +1,23 @@
-# Example for Ubuntu
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-  && curl -s -L https://nvidia.github.io/libnvidia-container/ubuntu22.04/libnvidia-container.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt update
-sudo apt install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
+# main.py
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uvicorn
+
+app = FastAPI(title="My FastAPI App on Kubeflow")
+
+class PredictionRequest(BaseModel):
+    data: list[float]
+
+@app.get("/")
+def read_root():
+    return {"message": "Hello from FastAPI on Kubeflow!"}
+
+@app.post("/predict")
+def predict(request: PredictionRequest):
+    # In a real-world scenario, you'd load your ML model here
+    prediction = sum(request.data) / len(request.data) if request.data else 0
+    return {"prediction": prediction, "input_data": request.data}
+
+if __name__ == "__main__":
+    # Ensure this runs on 0.0.0.0 for container accessibility
+    uvicorn.run(app, host="0.0.0.0", port=8000)
