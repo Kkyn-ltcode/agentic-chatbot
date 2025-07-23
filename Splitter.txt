@@ -1,23 +1,7 @@
-# main.py
-from fastapi import FastAPI
-from pydantic import BaseModel
-import uvicorn
-
-app = FastAPI(title="My FastAPI App on Kubeflow")
-
-class PredictionRequest(BaseModel):
-    data: list[float]
-
-@app.get("/")
-def read_root():
-    return {"message": "Hello from FastAPI on Kubeflow!"}
-
-@app.post("/predict")
-def predict(request: PredictionRequest):
-    # In a real-world scenario, you'd load your ML model here
-    prediction = sum(request.data) / len(request.data) if request.data else 0
-    return {"prediction": prediction, "input_data": request.data}
-
-if __name__ == "__main__":
-    # Ensure this runs on 0.0.0.0 for container accessibility
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+        "user_message": "What is the capital of France?",
+        "session_id": "test_session_123"
+      }' \
+  "https://aws.kf.bixbyml.com/notebook/A/n4/lab/tree/B/users/UI/my-chatbot-ui/proxy/8001/chat"
