@@ -1,10 +1,26 @@
-fetch("http://127.0.0.1:8000/greet", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({ name: "Alice", age: 25 })
-})
-  .then(res => res.json())
-  .then(data => console.log(data))
-  .catch(err => console.error("Error:", err));
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Fetch Test</title>
+</head>
+<body>
+  <h2>Test FastAPI Fetch</h2>
+  <button onclick="sendRequest()">Send Request</button>
+
+  <script>
+    async function sendRequest() {
+      const response = await fetch("http://127.0.0.1:8000/greet", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: "Alice", age: 25 })
+      });
+
+      const data = await response.json();
+      console.log("✅ Response:", data);
+      alert(data.message);
+    }
+  </script>
+</body>
+</html>
