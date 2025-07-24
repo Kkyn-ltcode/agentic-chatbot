@@ -1,7 +1,22 @@
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{
-        "user_message": "What is the capital of France?",
-        "session_id": "test_session_123"
-      }' \
-  "https://aws.kf.bixbyml.com/notebook/A/n4/lab/tree/B/users/UI/my-chatbot-ui/proxy/8001/chat"
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="https://www.gstatic.com/images/branding/product/2x/gemini_2023_64dp.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="Web site created using create-react-app"
+    />
+    <title>Gemini Chatbot UI</title>
+    <!-- Tailwind CSS CDN for development -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <!-- This is where your React app will be mounted -->
+  </body>
+</html>
