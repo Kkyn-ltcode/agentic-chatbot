@@ -1,9 +1,10 @@
-// Use a consistent session ID for the backend, typically the Firestore conversation ID.
-    // If currentConversationId is null (new chat), use userId as a temporary session_id.
-    // This allows your FastAPI backend's memory to be tied to this session_id.
-    const backendSessionId = currentConversationId || userId;
-
-    const botResponse = await callFastAPIChatbot(userMessage.text, backendSessionId); // <--- CHANGED
-    const botMessage = { sender: 'bot', text: botResponse };
-    const finalMessages = [...updatedMessages, botMessage];
-    setMessages(finalMessages);
+fetch("http://127.0.0.1:8000/greet", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({ name: "Alice", age: 25 })
+})
+  .then(res => res.json())
+  .then(data => console.log(data))
+  .catch(err => console.error("Error:", err));
