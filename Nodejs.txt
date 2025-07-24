@@ -1,0 +1,45 @@
+Option 2: Using apt-get (If sudo and system-wide installation is preferred/possible)
+
+If your Kubeflow environment allows sudo apt-get for system-wide installations, this can be simpler.
+
+Remove existing Node.js (optional but recommended to avoid conflicts):
+
+Bash
+sudo apt-get remove nodejs npm
+Add NodeSource PPA for Node.js 18:
+This repository provides more up-to-date Node.js packages.
+
+Bash
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+Install Node.js and npm:
+
+Bash
+sudo apt-get install -y nodejs
+Verify New Versions:
+
+Bash
+node -v
+npm -v
+You should see v18.x.x for Node and a compatible npm version.
+
+Step 3: Reinstall Project Dependencies and Build
+
+After successfully updating Node.js and npm using either Option 1 or Option 2:
+
+Navigate to your project directory:
+
+Bash
+cd ~/my-chatbot-ui # Adjust path if your project is elsewhere
+Clean and reinstall dependencies (CRITICAL after Node.js update):
+This step is vital because node_modules often contains native binaries compiled for a specific Node.js version.
+
+Bash
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+Build Your React Application:
+Now that your Node.js environment is compatible and dependencies are fresh, try building again.
+
+Bash
+npx react-scripts build
+This should now successfully build your React application. If you encounter any new errors, please share them, but updating Node.js is the most critical step here.
