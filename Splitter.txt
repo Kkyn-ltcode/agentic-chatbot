@@ -1,22 +1,41 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="https://www.gstatic.com/images/branding/product/2x/gemini_2023_64dp.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
-    <meta
-      name="description"
-      content="Web site created using create-react-app"
-    />
-    <title>Gemini Chatbot UI</title>
-    <!-- Tailwind CSS CDN for development -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  </head>
-  <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
-    <!-- This is where your React app will be mounted -->
-  </body>
-</html>
+// Function to call FastAPI backend
+const callFastAPIChatbot = async (userMessage, sessionId) => {
+  setIsLoading(true); // Indicate that a request is in progress
+  try {
+    // Define your FastAPI endpoint URL
+    const apiUrl = "https://aws.kf.bixbyml.com/notebook/A/n4/lab/tree/B/users/UI/my-chatbot-ui/proxy/8001/chat";
+
+    // Prepare the payload as expected by your FastAPI endpoint
+    // Your FastAPI likely expects a 'user_message' and a 'session_id'
+    const payload = {
+      user_message: userMessage,
+      session_id: sessionId // This is crucial for maintaining conversation history in your RAG chatbot
+    };
+
+    // Send the POST request to your FastAPI backend
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    // Check if the response was successful (status code 2xx)
+    if (!response.ok) {
+      const errorData = await response.json(); // Attempt to read error details from the response
+      throw new Error(`FastAPI error: ${response.status} - ${errorData.detail || response.statusText}`);
+    }
+
+    // Parse the JSON response from your FastAPI backend
+    const result = await response.json();
+
+    // Assuming your FastAPI returns the chatbot's response in a key like "response"
+    // Adjust 'result.response' if your FastAPI returns a different key (e.g., result.answer, result.text)
+    return result.response;
+
+  } catch (error) {
+    console.error("Error calling FastAPI chatbot:", error);
+    return `Error: Failed to connect to chatbot backend. ${error.message}`;
+  } finally {
+    setIsLoading(false); // End loading state
+  }
+};
