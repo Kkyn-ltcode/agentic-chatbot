@@ -14,22 +14,30 @@
 
     setIsLoading(true); // Start loading indicator
 
-    const backendSessionId = currentConversationId || userId; // Use currentConversationId or userId for session
+    // Ensure backendSessionId is always a string, even if userId is null/undefined
+    const backendSessionId = currentConversationId || currentUserId || "default_session_frontend"; // <--- Updated fallback for sessionId
+    console.log("Sending sessionId to backend:", backendSessionId); // Debug log
 
     // Define the callback for each chunk received
     const appendChunk = (chunk) => {
+      console.log("appendChunk: Received chunk =", chunk); // Debug log
+
       setMessages((prevMessages) => {
         const lastMessageIndex = prevMessages.length - 1;
         // Ensure the last message is from the bot before appending
         if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
           const updatedMessages = [...prevMessages];
+          const oldText = updatedMessages[lastMessageIndex].text;
+          const newText = oldText + chunk;
           updatedMessages[lastMessageIndex] = {
             ...updatedMessages[lastMessageIndex],
-            text: updatedMessages[lastMessageIndex].text + chunk,
+            text: newText,
           };
+          console.log("appendChunk: Updating message text from", oldText, "to", newText); // Debug log
           return updatedMessages;
         }
-        return prevMessages; // Should not happen if logic is correct
+        console.warn("appendChunk: Last message is not bot message or no messages exist."); // Debug warn
+        return prevMessages;
       });
     };
 
@@ -54,11 +62,19 @@
     } finally {
       setIsLoading(false); // Stop loading indicator after streaming completes or errors
       // Save conversation after streaming is done and messages are fully updated
-      // This will capture the full streamed response
-      if (currentConversationId) {
-        const latestMessages = messages; // `messages` might be stale here due to closure,
-                                       // consider passing a snapshot or re-reading from state if needed for saving
-        await saveConversation(currentConversationId, currentConversationTitle, latestMessages);
-      }
+      // Use a functional update for saveConversation to get the latest messages
+      setMessages(finalMessages => { // Use finalMessages from state closure
+        if (currentConversationId) {
+          saveConversation(currentConversationId, currentConversationTitle, finalMessages);
+        } else {
+          // If new conversation, generate a new ID and save
+          const newConvId = doc(collection(db, `artifacts/${appId}/users/${currentUserId}/conversations`)).id;
+          const defaultTitle = finalMessages[0]?.text.substring(0, 50) || "New Chat";
+          saveConversation(newConvId, defaultTitle, finalMessages);
+          setCurrentConversationId(newConvId);
+          setCurrentConversationTitle(defaultTitle);
+        }
+        return finalMessages; // Return the messages as is
+      });
     }
   };
