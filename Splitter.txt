@@ -1,22 +1,22 @@
-// tailwind.config.js
-/** @type {import('tailwindcss').Config} */
-module.exports = {
-  content: [
-    "./src/**/*.{js,jsx,ts,tsx}",
-    "./public/index.html",
-  ],
-  theme: {
-    extend: {
-      keyframes: {
-        'border-spin': {
-          '0%': { transform: 'rotate(0deg)' },
-          '100%': { transform: 'rotate(360deg)' },
-        },
-      },
-      animation: {
-        'border-spin': 'border-spin 3s linear infinite', // 3s duration, linear, infinite
-      },
-    },
-  },
-  plugins: [],
+/* src/index.css */
+
+/* ... (existing @tailwind directives and other CSS) ... */
+
+.animated-colorful-border {
+  /* This conic-gradient creates the multi-color effect */
+  background: conic-gradient(
+    from 0deg,
+    #ff0000, /* Red */
+    #ffa500, /* Orange */
+    #ffff00, /* Yellow */
+    #008000, /* Green */
+    #0000ff, /* Blue */
+    #4b0082, /* Indigo */
+    #ee82ee, /* Violet */
+    #ff0000 /* Red (to complete the circle) */
+  );
+  /* Use a radial gradient mask to create the border effect */
+  /* This makes the center transparent, leaving only the outer ring visible */
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), black calc(100% - 4px + 1px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), black calc(100% - 4px + 1px));
 }
