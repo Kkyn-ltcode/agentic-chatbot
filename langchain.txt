@@ -1,368 +1,80 @@
-# main.py (or app.py)
-import os
-import asyncio
-from operator import itemgetter
-from typing import List, Optional, Any
-from functools import partial
+// Handle sending message and streaming response
+  const handleSendMessage = async () => {
+    if (inputText.trim() === '') return;
 
-# FastAPI imports
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+    const userMessage = { sender: 'user', text: inputText.trim() };
+    // Add user message immediately
+    setMessages((prevMessages) => [...prevMessages, userMessage]);
 
-# --- Agent and Tool Specific Imports ---
-from langchain_community.tools import DuckDuckGoSearchRun
-from langchain.agents import AgentExecutor
-from langchain.tools import Tool, tool
-from langchain.chains import LLMMathChain
+    // Add an empty bot message placeholder for streaming
+    const initialBotMessage = { sender: 'bot', text: '' };
+    setMessages((prevMessages) => [...prevMessages, initialBotMessage]);
 
-# --- Existing RAG and Memory Imports ---
-from transformers import AutoTokenizer
+    setInputText(''); // Clear input immediately
 
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI # Changed from langchain_openai to langchain_community.chat_models for broader compatibility
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
-from langchain.memory import ConversationSummaryBufferMemory
-from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+    setIsLoading(true); // Start loading indicator
 
-# --- Imports for manual agent construction ---
-from langchain.agents.format_scratchpad import format_log_to_messages
-from langchain.agents.output_parsers import ReActSingleInputOutputParser
+    // Ensure backendSessionId is always a string, even if userId is null/undefined
+    const backendSessionId = currentConversationId || currentUserId || "default_session_frontend"; // <--- Updated fallback for sessionId
+    console.log("Sending sessionId to backend:", backendSessionId); // Debug log
 
-# --- Custom LLM Class with Qwen Token Counter (Optional, if still needed for token counting with public API) ---
-# If you use this, ensure you configure it to point to a public OpenAI API base URL
-class QwenTokenCountingChatOpenAI(ChatOpenAI):
-    tokenizer: AutoTokenizer = None
+    // Define the callback for each chunk received
+    const appendChunk = (chunk) => {
+      console.log("appendChunk: Received chunk =", chunk); // Debug log
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if self.tokenizer is None:
-            tokenizer_name_or_path = "Qwen/Qwen1.5-72B-Chat-AWQ"
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
-            except Exception as e:
-                print(f"ERROR: Could not load Qwen tokenizer from '{tokenizer_name_or_path}': {e}")
-                self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        
-        if not hasattr(self.tokenizer, 'apply_chat_template') or self.tokenizer.chat_template is None:
-            self.tokenizer.chat_template = (
-                "{% for message in messages %}"
-                "{% if message['role'] == 'user' %}"
-                "{{ '<|im_start|>user\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% elif message['role'] == 'assistant' %}"
-                "{{ '<|im_start|>assistant\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% elif message['role'] == 'system' %}"
-                "{{ '<|im_start|>system\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% else %}"
-                "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}"
-                "{% endif %}"
-                "{% endfor %}"
-                "{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
-            )
+      setMessages((prevMessages) => {
+        const lastMessageIndex = prevMessages.length - 1;
+        // Ensure the last message is from the bot before appending
+        if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
+          const updatedMessages = [...prevMessages];
+          const oldText = updatedMessages[lastMessageIndex].text;
+          const newText = oldText + chunk;
+          updatedMessages[lastMessageIndex] = {
+            ...updatedMessages[lastMessageIndex],
+            text: newText,
+          };
+          console.log("appendChunk: Updating message text from", oldText, "to", newText); // Debug log
+          return updatedMessages;
+        }
+        console.warn("appendChunk: Last message is not bot message or no messages exist."); // Debug warn
+        return prevMessages;
+      });
+    };
 
-    def _get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
-        if self.tokenizer is None:
-            return sum(len(msg.content.split()) for msg in messages)
-
-        hf_messages = []
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                hf_messages.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                hf_messages.append({"role": "assistant", "content": msg.content})
-            elif isinstance(msg, SystemMessage):
-                hf_messages.append({"role": "system", "content": msg.content})
-            else:
-                hf_messages.append({"role": msg.type, "content": msg.content})
-
-        try:
-            token_ids = self.tokenizer.apply_chat_template(
-                hf_messages,
-                tokenize=True,
-                add_generation_prompt=True
-            )
-            return len(token_ids)
-        except Exception as e:
-            print(f"Warning: Failed to apply chat template for token counting: {e}. Falling back to word count.")
-            return sum(len(msg.content.split()) for msg in messages)
-
-
-# --- Helper Function for Formatting Retrieved Documents ---
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
-
-
-# --- 1. RAG Setup: Embeddings, Vector Store, and Retriever ---
-print("Setting up RAG components...")
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-doc_vectorstore = FAISS.from_documents(
-    [
-        Document(page_content="The Amazon rainforest is located in South America."),
-        Document(page_content="The Amazon river is the largest river by discharge volume."),
-        Document(page_content="The sun is a star. It is in the center of the solar system."),
-        Document(page_content="The Earth orbits the sun in an elliptical path."),
-        Document(page_content="Photosynthesis is the process by which plants convert light energy into chemical energy."),
-        Document(page_content="The capital of France is Paris."),
-        Document(page_content="The Eiffel Tower is located in Paris."),
-        Document(page_content="Mount Everest is the highest mountain in the world.")
-    ],
-    embeddings
-)
-retriever = doc_vectorstore.as_retriever(search_kwargs={"k": 2})
-print("RAG components ready.")
-
-
-# --- 2. LLM Initialization ---
-print("Initializing LLM...")
-# --- MODIFIED LLM INITIALIZATION FOR LOCAL QWEN VLLM SERVER ---
-llm = QwenTokenCountingChatOpenAI(
-    model="qwen-72b-awq", # This should match the model name you are serving with vLLM
-    openai_api_base="http://localhost:8000/v1", # Point to your local vLLM server
-    openai_api_key="EMPTY", # vLLM typically doesn't require an API key for local serving
-    max_tokens=2048,
-    temperature=0.0,
-    stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
-)
-# Original ChatOpenAI for public API (now commented out)
-# llm = ChatOpenAI(
-#     model="gpt-3.5-turbo", # Or "gpt-4o", "mistral-large-latest" etc. based on your API access
-#     openai_api_key=os.environ.get("OPENAI_API_KEY"), # Reads API key from environment variable
-#     max_tokens=2048,
-#     temperature=0.0,
-#     # Stop sequences might need adjustment based on the model used
-#     stop=["<|im_end|>", "----", "Human:", "\nHuman:", "\n\nHuman:"]
-# )
-print("LLM ready.")
-
-
-# --- 3. Memory Setup (In-Memory Summary Buffer) ---
-# NOTE: This memory is per-process. If the FastAPI server restarts, memory is lost.
-# For persistent memory across sessions/users, you'd integrate Firestore here.
-print("Setting up memory manager (in-memory)...")
-memory_manager = ConversationSummaryBufferMemory(
-    llm=llm,
-    max_token_limit=1024,
-    return_messages=True,
-    memory_key="chat_history"
-)
-print("Memory manager ready.")
-
-
-# --- 4. Define Tools for the Agent ---
-print("Defining tools for the agent...")
-
-search_tool = DuckDuckGoSearchRun(
-    name="web_search",
-    description="Useful for answering questions about current events or general knowledge that is NOT in the provided knowledge base."
-)
-
-math_chain = LLMMathChain.from_llm(llm=llm, verbose=False)
-calculator_tool = Tool(
-    name="Calculator",
-    func=math_chain.run,
-    description="Useful for when you need to answer questions about math or perform calculations."
-)
-
-@tool
-def knowledge_base_search(query: str) -> str:
-    """
-    Useful for answering questions about specific predefined knowledge,
-    such as facts about the Amazon rainforest, the sun, or geographical data
-    that might be in the bot's internal knowledge base.
-    Always prioritize using this tool for factual questions that seem
-    like they should be in the bot's existing documents.
-    """
-    history_messages = memory_manager.load_memory_variables({})["chat_history"]
-
-    rag_tool_chain = (
-        RunnablePassthrough.assign(
-            context=itemgetter("question") | retriever | format_docs,
-            history=RunnableLambda(lambda x: history_messages)
-        )
-        | ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful AI assistant. Use the following retrieved context to answer the question. "
-                         "If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n"
-                         "Retrieved Context:\n{context}\n\n"
-                         "Chat History:\n{history}"),
-            ("human", "{question}")
-        ])
-        | llm
-        | StrOutputParser()
-    )
-    
-    result = rag_tool_chain.invoke({"question": query})
-    return result
-
-tools = [search_tool, calculator_tool, knowledge_base_search]
-print("Tools defined:", [t.name for t in tools])
-
-
-# --- 5. Define the Agent Prompt (FINAL REFINEMENT) ---
-agent_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful AI assistant. You have access to the following tools: {tools}\n"
-                 "You should only use the tools if necessary and for factual information. "
-                 "Prioritize using 'knowledge_base_search' for facts that seem to be in a static knowledge base, "
-                 "and 'web_search' for current events or general knowledge.\n"
-                 "\n"
-                 "**IMPORTANT INSTRUCTIONS:**\n"
-                 "Follow this exact format for your responses strictly and do not deviate. **You must generate only ONE logical step per turn.**\n\n"
-                 "Question: the input question you must answer\n"
-                 "Thought: you should always think about what to do\n"
-                 "Action: the action to take, should be one of [{tool_names}]\n"
-                 "Action Input: the input to the action\n"
-                 "Observation: the result of the action\n"
-                 "...\n"
-                 "Thought: I now know the final answer\n"
-                 "**Final Answer: <YOUR_FINAL_ANSWER_GOES_HERE>**\n\n"
-                 "**CRITICAL:**\n"
-                 "1. If you decide to use a tool, your entire output for this turn MUST end immediately after 'Action Input: <tool_input>'.\n"
-                 "2. If you know the final answer, your entire output for this turn MUST end immediately after 'Final Answer: <final_answer>'.\n"
-                 "DO NOT generate 'Observation:' or any further 'Thought:' or 'Action:' after an 'Action Input:' unless it's a new turn after an Observation.\n"
-                 "DO NOT generate any content after 'Final Answer:'."),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad")
-])
-print("Agent prompt template ready.")
-
-
-# --- Debugging Function for agent_scratchpad (Optional) ---
-def debug_scratchpad_type(input_dict: dict) -> dict:
-    scratchpad_value = input_dict.get("agent_scratchpad")
-    print("\n--- DEBUG: agent_scratchpad BEFORE prompt usage ---")
-    print(f"Value: {scratchpad_value!r}")
-    print(f"Type: {type(scratchpad_value)}")
-    if isinstance(scratchpad_value, list):
-        print(f"Is list of BaseMessage: {all(isinstance(msg, BaseMessage) for msg in scratchpad_value)}")
-    else:
-        print("Not a list.")
-    print("--------------------------------------------------\n")
-    return input_dict
-
-# --- NEW Debugging Function for LLM Output ---
-def debug_llm_output(llm_response: Any) -> Any:
-    output_content = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-    print("\n--- DEBUG: Raw LLM Output Before Parsing ---")
-    print(f"Type of LLM Response Object: {type(llm_response)}")
-    print(f"Content: {output_content!r}")
-    print("------------------------------------------\n")
-    return llm_response
-
-# --- 6. Create the Agent and Executor (FIXED VERSION) ---
-print("Creating agent and executor...")
-
-agent_chain = (
-    RunnablePassthrough.assign(
-        agent_scratchpad=lambda x: format_log_to_messages(x["intermediate_steps"]),
-        tools=lambda x: x["tools"],
-        tool_names=lambda x: [t.name for t in x["tools"]],
-        chat_history=lambda x: x["chat_history"],
-        input=lambda x: x["input"],
-    )
-    | RunnableLambda(debug_scratchpad_type)
-    | agent_prompt
-    | llm.bind(stop=["\nObservation:", "\nFinal Answer:", "Final Answer:"]) 
-    | RunnableLambda(debug_llm_output)
-    | ReActSingleInputOutputParser() 
-)
-
-
-agent_executor = AgentExecutor(
-    agent=agent_chain,
-    tools=tools,
-    verbose=True,
-    handle_parsing_errors=True
-)
-print("Agent executor ready.")
-
-
-# --- FastAPI Application Setup ---
-app = FastAPI(
-    title="RAG Chatbot Backend",
-    description="A backend for a RAG chatbot using LangChain agents and tools.",
-    version="1.0.0",
-)
-
-# Add CORS middleware to allow requests from your React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Adjust this to your React app's specific origin in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# In-memory session store for chat history
-# In a real application, this would be a database (e.g., Firestore, Redis)
-# keyed by a user/session ID from the frontend.
-# For now, we'll use a simple global dict for demonstration.
-# This means memory is NOT persistent across server restarts or different users.
-session_memories = {}
-
-# Helper to get memory for a session (or create a new one)
-def get_session_memory(session_id: str):
-    if session_id not in session_memories:
-        session_memories[session_id] = ConversationSummaryBufferMemory(
-            llm=llm,
-            max_token_limit=1024,
-            return_messages=True,
-            memory_key="chat_history"
-        )
-    return session_memories[session_id]
-
-# Pydantic model for request body
-from pydantic import BaseModel
-
-class ChatRequest(BaseModel):
-    user_message: str
-    session_id: str = "default_session" # Default session ID for simplicity
-
-@app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    user_message = request.user_message
-    session_id = request.session_id
-
-    current_memory = get_session_memory(session_id)
-    history_for_agent = current_memory.load_memory_variables({})["chat_history"]
-
-    full_response_content = ""
-    try:
-        # Stream the agent's response
-        async for chunk in agent_executor.astream(
-            {"input": user_message, "chat_history": history_for_agent, "tools": tools, "tool_names": [t.name for t in tools]}
-        ):
-            if "output" in chunk:
-                full_response_content += chunk["output"]
-                # For streaming back to the client, you'd yield here
-                # For now, we collect and send the full response
-        
-        # Save context after full response is generated
-        current_memory.save_context(
-            {"input": user_message},
-            {"output": full_response_content}
-        )
-        return {"response": full_response_content}
-
-    except Exception as e:
-        print(f"\nAn error occurred during chat processing: {e}")
-        error_response = "I apologize, but I encountered an error trying to process that request."
-        current_memory.save_context(
-            {"input": user_message},
-            {"output": error_response}
-        )
-        raise HTTPException(status_code=500, detail=error_response)
-
-# Health check endpoint
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "message": "RAG Chatbot Backend is running."}
-
-# To run this FastAPI app, save it as e.g., `main.py`
-# Then, in your Kubeflow Notebook terminal, run:
-# uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-# (Use --reload only for development, remove for production)
+    try {
+      // Call the streaming function
+      await callFastAPIChatbot(userMessage.text, backendSessionId, appendChunk);
+    } catch (error) {
+      console.error("Error during streaming:", error);
+      // Append an error message to the bot's last message if streaming fails
+      setMessages((prevMessages) => {
+        const lastMessageIndex = prevMessages.length - 1;
+        if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
+          const updatedMessages = [...prevMessages];
+          updatedMessages[lastMessageIndex] = {
+            ...updatedMessages[lastMessageIndex],
+            text: updatedMessages[lastMessageIndex].text + `\n\n(Error: Failed to get full response. ${error.message})`,
+          };
+          return updatedMessages;
+        }
+        return prevMessages;
+      });
+    } finally {
+      setIsLoading(false); // Stop loading indicator after streaming completes or errors
+      // Save conversation after streaming is done and messages are fully updated
+      // Use a functional update for saveConversation to get the latest messages
+      setMessages(finalMessages => { // Use finalMessages from state closure
+        if (currentConversationId) {
+          saveConversation(currentConversationId, currentConversationTitle, finalMessages);
+        } else {
+          // If new conversation, generate a new ID and save
+          const newConvId = doc(collection(db, `artifacts/${appId}/users/${currentUserId}/conversations`)).id;
+          const defaultTitle = finalMessages[0]?.text.substring(0, 50) || "New Chat";
+          saveConversation(newConvId, defaultTitle, finalMessages);
+          setCurrentConversationId(newConvId);
+          setCurrentConversationTitle(defaultTitle);
+        }
+        return finalMessages; // Return the messages as is
+      });
+    }
+  };
