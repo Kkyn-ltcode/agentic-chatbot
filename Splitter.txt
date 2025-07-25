@@ -1,20 +1,87 @@
-/* src/index.css */
+{/* Chat display area */}
+        <div ref={chatDisplayRef} className={`flex-grow flex flex-col items-center p-4 overflow-y-auto pt-24 ${messages.length === 0 ? 'justify-center' : ''}`}>
+          {messages.length === 0 ? (
+            // New empty state layout: centered greeting and input box
+            <div className="flex flex-col items-center justify-center h-full w-full max-w-3xl xl:max-w-5xl 2xl:max-w-6xl px-4"> {/* Added h-full, flex-col, items-center, justify-center */}
+              <div className="text-4xl font-light text-neutral-800 mb-8">Happy Friday, {userName || '_'}</div> {/* Added greeting, dynamic name */}
 
-/* ... (existing @tailwind directives and other CSS) ... */
+              {/* Moved Input bar content here */}
+              <div className="w-full max-w-3xl xl:max-w-5xl 2xl:max-w-6xl mx-auto p-4 pb-8"> {/* Keep max-w and mx-auto for consistent width */}
+                <div className="flex items-center bg-white border border-neutral-300 rounded-xl px-4 py-3">
+                  {/* Plus icon for attachments */}
+                  <Tooltip text="Attach files">
+                    <button
+                      type="button"
+                      className="p-2 rounded-full hover:bg-neutral-100 text-neutral-600 focus:outline-none"
+                    >
+                      <svg
+                        className="w-6 h-6"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                        ></path>
+                      </svg>
+                    </button>
+                  </Tooltip>
 
-.animated-arc-border {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  /* This conic-gradient creates the arc effect */
-  background: conic-gradient(
-    from 0deg,
-    #ffc107, /* Yellowish-orange start color */
-    #ff5722, /* Orangish-red end color */
-    transparent 180deg /* Make the rest of the circle transparent */
-  );
-  /* This is crucial for making the gradient part of the border */
-  /* It creates an inner transparent circle, leaving only the gradient arc visible */
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), black calc(100% - 4px + 1px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), black calc(100% - 4px + 1px));
-}
+                  {/* Input text area */}
+                  <textarea
+                    className="flex-grow w-full p-2 bg-transparent resize-none outline-none text-neutral-800 placeholder-neutral-500"
+                    placeholder="Ask Gemini" // Changed placeholder to "Ask Gemini"
+                    rows="1"
+                    value={inputText}
+                    onChange={handleInputChange}
+                    onKeyPress={handleKeyPress}
+                    style={{ minHeight: '24px', maxHeight: '120px' }}
+                  ></textarea>
+
+                  {/* Action icons */}
+                  <div className="flex items-center space-x-2">
+                    {/* Send button */}
+                    <Tooltip text="Send Message">
+                      <button
+                        type="button"
+                        className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleSendMessage}
+                        disabled={isLoading || inputText.trim() === ''}
+                      >
+                        <svg
+                          className="w-6 h-6"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="2"
+                            d="M14 5l7 7m0 0l-7 7m7-7H3"
+                          ></path>
+                        </svg>
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
+              {/* Display User ID (for debugging/multi-user identification) - moved here */}
+              {userId && (
+                <div className="text-xs text-neutral-400 mt-4"> {/* Adjusted margin-top */}
+                  User ID: {userId}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="w-full max-w-3xl xl:max-w-5xl 2xl:max-w-6xl mx-auto px-4">
+              {/* ... existing messages map ... */}
+            </div>
+          )}
+          {/* ... isLoading block ... */}
+        </div>
