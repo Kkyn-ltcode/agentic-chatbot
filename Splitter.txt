@@ -1,80 +1,59 @@
-// Handle sending message and streaming response
-  const handleSendMessage = async () => {
-    if (inputText.trim() === '') return;
+// Function to call FastAPI backend with streaming
+const callFastAPIChatbot = async (userMessageText, sessionId, onChunk) => { // <--- Added onChunk parameter
+    const apiUrl = "http://localhost:8001/chat"; // IMPORTANT: Adjust this URL for your Kubeflow deployment!
 
-    const userMessage = { sender: 'user', text: inputText.trim() };
-    // Add user message immediately
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
-
-    // Add an empty bot message placeholder for streaming
-    const initialBotMessage = { sender: 'bot', text: '' };
-    setMessages((prevMessages) => [...prevMessages, initialBotMessage]);
-
-    setInputText(''); // Clear input immediately
-
-    setIsLoading(true); // Start loading indicator
-
-    // Ensure backendSessionId is always a string, even if userId is null/undefined
-    const backendSessionId = currentConversationId || currentUserId || "default_session_frontend"; // <--- Updated fallback for sessionId
-    console.log("Sending sessionId to backend:", backendSessionId); // Debug log
-
-    // Define the callback for each chunk received
-    const appendChunk = (chunk) => {
-      console.log("appendChunk: Received chunk =", chunk); // Debug log
-
-      setMessages((prevMessages) => {
-        const lastMessageIndex = prevMessages.length - 1;
-        // Ensure the last message is from the bot before appending
-        if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
-          const updatedMessages = [...prevMessages];
-          const oldText = updatedMessages[lastMessageIndex].text;
-          const newText = oldText + chunk;
-          updatedMessages[lastMessageIndex] = {
-            ...updatedMessages[lastMessageIndex],
-            text: newText,
-          };
-          console.log("appendChunk: Updating message text from", oldText, "to", newText); // Debug log
-          return updatedMessages;
-        }
-        console.warn("appendChunk: Last message is not bot message or no messages exist."); // Debug warn
-        return prevMessages;
-      });
+    const payload = {
+        user_message: userMessageText,
+        session_id: sessionId,
     };
 
+    console.log("Frontend: Sending request to backend with payload:", payload);
+
     try {
-      // Call the streaming function
-      await callFastAPIChatbot(userMessage.text, backendSessionId, appendChunk);
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        console.log("Frontend: Received response status:", response.status);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Frontend: Backend error response:", errorText);
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        }
+
+        if (!response.body) {
+            console.error("Frontend: Response body is null or not readable.");
+            onChunk("Error: No readable stream from backend.");
+            return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+
+        console.log("Frontend: Starting to read stream...");
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                console.log("Frontend: Stream finished.");
+                break;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            console.log("Frontend: Received chunk (decoded):", chunk); // Changed to log decoded only
+            onChunk(chunk); // Pass the chunk to the frontend's appendChunk
+        }
+        // Final decode to catch any remaining buffered text
+        const finalChunk = decoder.decode();
+        if (finalChunk) {
+            console.log("Frontend: Received final chunk (decoded):", finalChunk);
+            onChunk(finalChunk);
+        }
+
     } catch (error) {
-      console.error("Error during streaming:", error);
-      // Append an error message to the bot's last message if streaming fails
-      setMessages((prevMessages) => {
-        const lastMessageIndex = prevMessages.length - 1;
-        if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
-          const updatedMessages = [...prevMessages];
-          updatedMessages[lastMessageIndex] = {
-            ...updatedMessages[lastMessageIndex],
-            text: updatedMessages[lastMessageIndex].text + `\n\n(Error: Failed to get full response. ${error.message})`,
-          };
-          return updatedMessages;
-        }
-        return prevMessages;
-      });
-    } finally {
-      setIsLoading(false); // Stop loading indicator after streaming completes or errors
-      // Save conversation after streaming is done and messages are fully updated
-      // Use a functional update for saveConversation to get the latest messages
-      setMessages(finalMessages => { // Use finalMessages from state closure
-        if (currentConversationId) {
-          saveConversation(currentConversationId, currentConversationTitle, finalMessages);
-        } else {
-          // If new conversation, generate a new ID and save
-          const newConvId = doc(collection(db, `artifacts/${appId}/users/${currentUserId}/conversations`)).id;
-          const defaultTitle = finalMessages[0]?.text.substring(0, 50) || "New Chat";
-          saveConversation(newConvId, defaultTitle, finalMessages);
-          setCurrentConversationId(newConvId);
-          setCurrentConversationTitle(defaultTitle);
-        }
-        return finalMessages; // Return the messages as is
-      });
+        console.error("Frontend: Error during streaming fetch:", error);
+        onChunk(`Error: Failed to connect to chatbot backend or streaming issue. ${error.message}`);
     }
-  };
+};
