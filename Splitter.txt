@@ -1,87 +1,64 @@
-{/* Chat display area */}
-        <div ref={chatDisplayRef} className={`flex-grow flex flex-col items-center p-4 overflow-y-auto pt-24 ${messages.length === 0 ? 'justify-center' : ''}`}>
-          {messages.length === 0 ? (
-            // New empty state layout: centered greeting and input box
-            <div className="flex flex-col items-center justify-center h-full w-full max-w-3xl xl:max-w-5xl 2xl:max-w-6xl px-4"> {/* Added h-full, flex-col, items-center, justify-center */}
-              <div className="text-4xl font-light text-neutral-800 mb-8">Happy Friday, {userName || '_'}</div> {/* Added greeting, dynamic name */}
+// Handle sending message and streaming response
+  const handleSendMessage = async () => {
+    if (inputText.trim() === '') return;
 
-              {/* Moved Input bar content here */}
-              <div className="w-full max-w-3xl xl:max-w-5xl 2xl:max-w-6xl mx-auto p-4 pb-8"> {/* Keep max-w and mx-auto for consistent width */}
-                <div className="flex items-center bg-white border border-neutral-300 rounded-xl px-4 py-3">
-                  {/* Plus icon for attachments */}
-                  <Tooltip text="Attach files">
-                    <button
-                      type="button"
-                      className="p-2 rounded-full hover:bg-neutral-100 text-neutral-600 focus:outline-none"
-                    >
-                      <svg
-                        className="w-6 h-6"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                        ></path>
-                      </svg>
-                    </button>
-                  </Tooltip>
+    const userMessage = { sender: 'user', text: inputText.trim() };
+    // Add user message immediately
+    setMessages((prevMessages) => [...prevMessages, userMessage]);
 
-                  {/* Input text area */}
-                  <textarea
-                    className="flex-grow w-full p-2 bg-transparent resize-none outline-none text-neutral-800 placeholder-neutral-500"
-                    placeholder="Ask Gemini" // Changed placeholder to "Ask Gemini"
-                    rows="1"
-                    value={inputText}
-                    onChange={handleInputChange}
-                    onKeyPress={handleKeyPress}
-                    style={{ minHeight: '24px', maxHeight: '120px' }}
-                  ></textarea>
+    // Add an empty bot message placeholder for streaming
+    const initialBotMessage = { sender: 'bot', text: '' };
+    setMessages((prevMessages) => [...prevMessages, initialBotMessage]);
 
-                  {/* Action icons */}
-                  <div className="flex items-center space-x-2">
-                    {/* Send button */}
-                    <Tooltip text="Send Message">
-                      <button
-                        type="button"
-                        className="p-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                        onClick={handleSendMessage}
-                        disabled={isLoading || inputText.trim() === ''}
-                      >
-                        <svg
-                          className="w-6 h-6"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                          xmlns="http://www.w3.org/2000/svg"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth="2"
-                            d="M14 5l7 7m0 0l-7 7m7-7H3"
-                          ></path>
-                        </svg>
-                      </button>
-                    </Tooltip>
-                  </div>
-                </div>
-              </div>
-              {/* Display User ID (for debugging/multi-user identification) - moved here */}
-              {userId && (
-                <div className="text-xs text-neutral-400 mt-4"> {/* Adjusted margin-top */}
-                  User ID: {userId}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="w-full max-w-3xl xl:max-w-5xl 2xl:max-w-6xl mx-auto px-4">
-              {/* ... existing messages map ... */}
-            </div>
-          )}
-          {/* ... isLoading block ... */}
-        </div>
+    setInputText(''); // Clear input immediately
+
+    setIsLoading(true); // Start loading indicator
+
+    const backendSessionId = currentConversationId || userId; // Use currentConversationId or userId for session
+
+    // Define the callback for each chunk received
+    const appendChunk = (chunk) => {
+      setMessages((prevMessages) => {
+        const lastMessageIndex = prevMessages.length - 1;
+        // Ensure the last message is from the bot before appending
+        if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
+          const updatedMessages = [...prevMessages];
+          updatedMessages[lastMessageIndex] = {
+            ...updatedMessages[lastMessageIndex],
+            text: updatedMessages[lastMessageIndex].text + chunk,
+          };
+          return updatedMessages;
+        }
+        return prevMessages; // Should not happen if logic is correct
+      });
+    };
+
+    try {
+      // Call the streaming function
+      await callFastAPIChatbot(userMessage.text, backendSessionId, appendChunk);
+    } catch (error) {
+      console.error("Error during streaming:", error);
+      // Append an error message to the bot's last message if streaming fails
+      setMessages((prevMessages) => {
+        const lastMessageIndex = prevMessages.length - 1;
+        if (lastMessageIndex >= 0 && prevMessages[lastMessageIndex].sender === 'bot') {
+          const updatedMessages = [...prevMessages];
+          updatedMessages[lastMessageIndex] = {
+            ...updatedMessages[lastMessageIndex],
+            text: updatedMessages[lastMessageIndex].text + `\n\n(Error: Failed to get full response. ${error.message})`,
+          };
+          return updatedMessages;
+        }
+        return prevMessages;
+      });
+    } finally {
+      setIsLoading(false); // Stop loading indicator after streaming completes or errors
+      // Save conversation after streaming is done and messages are fully updated
+      // This will capture the full streamed response
+      if (currentConversationId) {
+        const latestMessages = messages; // `messages` might be stale here due to closure,
+                                       // consider passing a snapshot or re-reading from state if needed for saving
+        await saveConversation(currentConversationId, currentConversationTitle, latestMessages);
+      }
+    }
+  };
