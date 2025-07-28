@@ -1,15 +1,11 @@
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}", // This line is crucial for React components
-  ],
-  theme: {
-    extend: {
-      fontFamily: {
-        inter: ['Inter', 'sans-serif'], // Add Inter font as used in your UI
-      },
-    },
-  },
-  plugins: [],
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* You can keep other global styles below these directives */
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif; /* Apply Inter font globally */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
