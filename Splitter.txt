@@ -1,59 +1,8 @@
-// Function to call FastAPI backend with streaming
-const callFastAPIChatbot = async (userMessageText, sessionId, onChunk) => { // <--- Added onChunk parameter
-    const apiUrl = "http://localhost:8001/chat"; // IMPORTANT: Adjust this URL for your Kubeflow deployment!
-
-    const payload = {
-        user_message: userMessageText,
-        session_id: sessionId,
-    };
-
-    console.log("Frontend: Sending request to backend with payload:", payload);
-
-    try {
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        console.log("Frontend: Received response status:", response.status);
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("Frontend: Backend error response:", errorText);
-            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-        }
-
-        if (!response.body) {
-            console.error("Frontend: Response body is null or not readable.");
-            onChunk("Error: No readable stream from backend.");
-            return;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-
-        console.log("Frontend: Starting to read stream...");
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                console.log("Frontend: Stream finished.");
-                break;
-            }
-            const chunk = decoder.decode(value, { stream: true });
-            console.log("Frontend: Received chunk (decoded):", chunk); // Changed to log decoded only
-            onChunk(chunk); // Pass the chunk to the frontend's appendChunk
-        }
-        // Final decode to catch any remaining buffered text
-        const finalChunk = decoder.decode();
-        if (finalChunk) {
-            console.log("Frontend: Received final chunk (decoded):", finalChunk);
-            onChunk(finalChunk);
-        }
-
-    } catch (error) {
-        console.error("Frontend: Error during streaming fetch:", error);
-        onChunk(`Error: Failed to connect to chatbot backend or streaming issue. ${error.message}`);
-    }
-};
+fastapi
+uvicorn[standard]
+langchain
+langchain-community
+langchain-huggingface
+langchain-openai
+tiktoken
+pydantic
