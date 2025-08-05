@@ -1,1 +1,14 @@
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig(({ command, mode, isSsrBuild, isPreview }) => {
+  const base = process.env.NB_PREFIX || '/';
+
+  return {
+    plugins: [react()],
+    base: base,
+    server: {
+      host: true, // This is essential for external access in a containerized environment
+    },
+  };
+});
