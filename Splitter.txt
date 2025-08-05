@@ -1,15 +1,1 @@
-curl -N -X POST http://localhost:8000/chat \
--H "Content-Type: application/json" \
--d '{
-  "question": "What is the Amazon rainforest?",
-  "user_id": "test-user-123",
-  "conversation_id": "conv-abc-789",
-  "conversation_title": "Test from Curl",
-  "messages": [
-    {
-      "id": "msg-001",
-      "sender": "user",
-      "text": "What is the Amazon rainforest?"
-    }
-  ]
-}'
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
