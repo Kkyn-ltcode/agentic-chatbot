@@ -1,14 +1,7 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-export default defineConfig(({ command, mode, isSsrBuild, isPreview }) => {
-  const base = process.env.NB_PREFIX || '/';
-
-  return {
-    plugins: [react()],
-    base: base,
-    server: {
-      host: true, // This is essential for external access in a containerized environment
-    },
-  };
-});
+curl -X 'POST' \
+  'http://127.0.0.1:8000/chat' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "message": "What is the capital of France?"
+}'
