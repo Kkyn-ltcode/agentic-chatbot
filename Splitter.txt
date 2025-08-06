@@ -1,2 +1,1 @@
-OLLAMA_ORIG=/usr/local/bin/ollama
-$OLLAMA_ORIG run llama3 --verbose
+<div className="prose prose-sm max-w-none text-base [&>p]:my-2 [&>ul]:my-2 [&>ol]:my-2 [&>li]:my-1">
