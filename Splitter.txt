@@ -1,1 +1,30 @@
-max-w-xl sm:max-w-2xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl
+// NEW: Custom components for ReactMarkdown to style tables directly
+const customComponents = {
+  table: ({ node, ...props }) => (
+    <div className="overflow-x-auto my-4">
+      <table className="w-full border-collapse">
+        {props.children}
+      </table>
+    </div>
+  ),
+  thead: ({ node, ...props }) => (
+    <thead className="bg-gray-100 dark:bg-gray-700">
+      {props.children}
+    </thead>
+  ),
+  th: ({ node, ...props }) => (
+    <th className="p-2 border border-gray-300 dark:border-gray-600 text-left font-semibold whitespace-nowrap">
+      {props.children}
+    </th>
+  ),
+  td: ({ node, ...props }) => (
+    <td className="p-2 border border-gray-300 dark:border-gray-600">
+      {props.children}
+    </td>
+  ),
+};
+
+// ... inside the ChatMessage component
+<ReactMarkdown remarkPlugins={[remarkGfm]} components={customComponents}>
+  {message.text}
+</ReactMarkdown>
