@@ -1,1 +1,2 @@
-wget https://ollama.com/download/Ollama.deb -O ollama.deb
+OLLAMA_ORIG=/usr/local/bin/ollama
+$OLLAMA_ORIG run llama3 --verbose
