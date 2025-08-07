@@ -1,30 +1,15 @@
-// NEW: Custom components for ReactMarkdown to style tables directly
-const customComponents = {
-  table: ({ node, ...props }) => (
-    <div className="overflow-x-auto my-4">
-      <table className="w-full border-collapse">
-        {props.children}
-      </table>
-    </div>
-  ),
-  thead: ({ node, ...props }) => (
-    <thead className="bg-gray-100 dark:bg-gray-700">
-      {props.children}
-    </thead>
-  ),
-  th: ({ node, ...props }) => (
-    <th className="p-2 border border-gray-300 dark:border-gray-600 text-left font-semibold whitespace-nowrap">
-      {props.children}
-    </th>
-  ),
-  td: ({ node, ...props }) => (
-    <td className="p-2 border border-gray-300 dark:border-gray-600">
-      {props.children}
-    </td>
-  ),
-};
+async def save_conversation_history_async(user_id: str, conversation_id: str, title: str, messages: List[dict], llm_response: str, is_pinned: bool):
+    """
+    Asynchronously updates the conversation history in the database after the streaming is complete.
+    """
+    # Create the full list of messages including the new AI response
+    messages.append({"id": str(len(messages) + 1), "sender": "bot", "text": llm_response, "thinkingContent": None, "isThinkingOpen": False})
 
-// ... inside the ChatMessage component
-<ReactMarkdown remarkPlugins={[remarkGfm]} components={customComponents}>
-  {message.text}
-</ReactMarkdown>
+    # Save or update the full conversation history
+    await save_conversation_to_db(
+        user_id,
+        conversation_id,
+        title,
+        messages,
+        is_pinned
+    )
