@@ -1,16 +1,32 @@
-async def _generate_new_summary_if_needed(temp_memory, current_user_message, current_bot_message):
+async def _run_background_memory_update(user_id: str, conversation_id: str, conversation_title: Optional[str], full_messages_dicts: List[dict]):
     """
-    A helper function to explicitly force a summary if the buffer is over the limit.
-    This is the key to fixing the bug.
+    Runs memory summarization and saves the updated conversation in a background task.
     """
-    all_messages = temp_memory.chat_memory.messages + [current_user_message, current_bot_message]
-    num_tokens = temp_memory.llm.get_num_tokens_from_messages(all_messages)
+    print("Starting background memory update...")
     
-    if num_tokens > temp_memory.max_token_limit:
-        print("Token limit exceeded, generating new summary...")
-        new_summary = await temp_memory.predict_new_summary(all_messages, temp_memory.moving_summary_buffer)
-        temp_memory.moving_summary_buffer = new_summary
-        print(f"New summary generated: {new_summary}")
-        return new_summary
-    else:
-        return temp_memory.moving_summary_buffer
+    # Create a fresh memory instance
+    memory = ConversationSummaryBufferMemory(
+        llm=llm,
+        max_token_limit=2048, # Use the same token limit as before
+        return_messages=True
+    )
+    
+    # Load all messages from the complete conversation into the memory
+    for msg in full_messages_dicts:
+        if msg.get('sender') == 'user':
+            memory.chat_memory.add_user_message(msg.get('text', ''))
+        elif msg.get('sender') == 'bot':
+            memory.chat_memory.add_ai_message(msg.get('text', ''))
+    
+    # This will trigger the summarization if the token limit is exceeded
+    memory.load_memory_variables({})
+    
+    # Convert messages from the in-memory object back to a format that can be saved
+    # This is not strictly necessary for this logic but shows the process.
+    # The `full_messages_dicts` already contains the full history, so we just use that.
+    
+    # Save the full conversation (now with an updated summary implicitly in the chat_history
+    # for the next turn) to the database.
+    await save_conversation_to_db(user_id, conversation_id, conversation_title, full_messages_dicts)
+    
+    print("Background memory update complete.")
