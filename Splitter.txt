@@ -1,15 +1,16 @@
-async def save_conversation_history_async(user_id: str, conversation_id: str, title: str, messages: List[dict], llm_response: str, is_pinned: bool):
+async def _generate_new_summary_if_needed(temp_memory, current_user_message, current_bot_message):
     """
-    Asynchronously updates the conversation history in the database after the streaming is complete.
+    A helper function to explicitly force a summary if the buffer is over the limit.
+    This is the key to fixing the bug.
     """
-    # Create the full list of messages including the new AI response
-    messages.append({"id": str(len(messages) + 1), "sender": "bot", "text": llm_response, "thinkingContent": None, "isThinkingOpen": False})
-
-    # Save or update the full conversation history
-    await save_conversation_to_db(
-        user_id,
-        conversation_id,
-        title,
-        messages,
-        is_pinned
-    )
+    all_messages = temp_memory.chat_memory.messages + [current_user_message, current_bot_message]
+    num_tokens = temp_memory.llm.get_num_tokens_from_messages(all_messages)
+    
+    if num_tokens > temp_memory.max_token_limit:
+        print("Token limit exceeded, generating new summary...")
+        new_summary = await temp_memory.predict_new_summary(all_messages, temp_memory.moving_summary_buffer)
+        temp_memory.moving_summary_buffer = new_summary
+        print(f"New summary generated: {new_summary}")
+        return new_summary
+    else:
+        return temp_memory.moving_summary_buffer
