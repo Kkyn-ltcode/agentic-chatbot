@@ -1,31 +1,13 @@
-p: ({ node, ...props }) => (
-+    <p className="my-2">
-+      {props.children}
-+    </p>
-+  ),
-+
-+  // Styles ordered lists
-+  ol: ({ node, ...props }) => (
-+    <ol className="my-2 list-decimal list-inside">
-+      {props.children}
-+    </ol>
-+  ),
-+
-+  // Styles unordered lists
-+  ul: ({ node, ...props }) => (
-+    <ul className="my-2 list-disc list-inside">
-+      {props.children}
-+    </ul>
-+  ),
-+
-+  // Styles list items
-+  li: ({ node, ...props }) => (
-+    <li className="my-1">
-+      {props.children}
-+    </li>
-+  ),
-+
-+  // Styles links to be colored and have a hover effect
-+  a: ({ node, ...props }) => (
-+    <a {...props} className="text-blue-600 hover:underline" />
-+  ),
+<div className="relative">
+  <select
+    value={selectedModel}
+    onChange={(e) => setSelectedModel(e.target.value)}
+    className="py-2 px-4 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+  >
+    {availableModels.map(model => (
+      <option key={model} value={model}>
+        {model}
+      </option>
+    ))}
+  </select>
+</div>
