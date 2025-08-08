@@ -1,13 +1,51 @@
-<div className="relative">
-  <select
-    value={selectedModel}
-    onChange={(e) => setSelectedModel(e.target.value)}
-    className="py-2 px-4 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-  >
-    {availableModels.map(model => (
-      <option key={model} value={model}>
-        {model}
-      </option>
-    ))}
-  </select>
-</div>
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronDown } from 'lucide-react';
+
+const ModelDropdown = ({ selectedModel, availableModels, onSelectModel }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center justify-between w-40 py-2 px-3 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors duration-200"
+      >
+        <span className="truncate">{selectedModel}</span>
+        <ChevronDown className={`w-4 h-4 text-gray-500 ml-2 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {isOpen && (
+        <div className="absolute bottom-full mb-2 w-40 bg-white border border-gray-300 rounded-lg shadow-lg z-20">
+          <ul className="py-1">
+            {availableModels.map((model) => (
+              <li
+                key={model}
+                // This is the crucial part that ensures the state is updated and the dropdown closes
+                onClick={() => {
+                  onSelectModel(model);
+                  setIsOpen(false);
+                }}
+                className={`py-2 px-3 text-sm cursor-pointer hover:bg-gray-100 ${selectedModel === model ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-700'}`}
+              >
+                {model}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
