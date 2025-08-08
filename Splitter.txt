@@ -1,3 +1,22 @@
-Hãy suy nghĩ từng bước một bằng tiếng Việt để tìm ra câu trả lời dựa trên ngữ cảnh đã cho. Sau đó, cung cấp câu trả lời cuối cùng cho người dùng, cũng bằng tiếng Việt.\n\n"
-     "Quy trình của bạn phải tuân theo cấu trúc sau:\n"
-     "<think>Suy nghĩ từng bước một ở đây...</think>\n
+<div
+            ref={contentRef}
+-            className="ml-4 mt-0 text-gray-700 font-inter text-base leading-relaxed bg-white p-1 overflow-hidden transition-all duration-500 ease-in-out border-l-2 border-gray-300 pl-6"
++            className="ml-4 mt-0 bg-white p-1 overflow-hidden transition-all duration-500 ease-in-out border-l-2 border-gray-300 pl-6"
+            style={{ maxHeight: maxHeight, opacity: currentOpacity }}
+          >
+-            <div className="whitespace-pre-wrap">
+-              {content.split('\n').map((line, i) => {
+-                if (line.startsWith('Examining Debug Logs') ||
+-                  line.startsWith('Uncovering the Root Cause')) {
+-                  return <p key={i} className="italic text-lg font-semibold mb-2">{line}</p>;
+-                }
+-                return <p key={i} className="mb-2">{line}</p>;
+-              })}
+-              {!content && <p>Thinking...</p>}
+-            </div>
++            <div className="prose prose-lg max-w-none text-gray-800 [&>p]:my-2 [&>ul]:my-2 [&>ol]:my-2 [&>li]:my-1">
++              <ReactMarkdown remarkPlugins={[remarkGfm]} components={customComponents}>
++                {content || 'Thinking...'}
++              </ReactMarkdown>
++            </div>
+          </div>
