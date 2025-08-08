@@ -1,51 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown } from 'lucide-react';
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.document_compressors import FlashrankRerank
 
-const ModelDropdown = ({ selectedModel, availableModels, onSelectModel }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef(null);
+# 1. Your base retriever with a high k to "cast a wide net"
+embeddings = OpenAIEmbeddings()
+db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+base_retriever = db.as_retriever(search_kwargs={"k": 20}) # Fetch 20 documents initially
 
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
+# 2. The reranker model
+# Flashrank is an open-source, ultra-fast option. Cohere is another popular choice.
+compressor = FlashrankRerank(top_n=5) # Rerank and return only the top 5
 
-  return (
-    <div className="relative" ref={dropdownRef}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-40 py-2 px-3 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors duration-200"
-      >
-        <span className="truncate">{selectedModel}</span>
-        <ChevronDown className={`w-4 h-4 text-gray-500 ml-2 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-      {isOpen && (
-        <div className="absolute bottom-full mb-2 w-40 bg-white border border-gray-300 rounded-lg shadow-lg z-20">
-          <ul className="py-1">
-            {availableModels.map((model) => (
-              <li
-                key={model}
-                // This is the crucial part that ensures the state is updated and the dropdown closes
-                onClick={() => {
-                  onSelectModel(model);
-                  setIsOpen(false);
-                }}
-                className={`py-2 px-3 text-sm cursor-pointer hover:bg-gray-100 ${selectedModel === model ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-700'}`}
-              >
-                {model}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-};
+# 3. Combine them into a single retriever
+compression_retriever = ContextualCompressionRetriever(
+    base_compressor=compressor,
+    base_retriever=base_retriever
+)
+
+# Use the new retriever, which will automatically fetch, rerank, and filter.
+query = "Why did the company's revenue increase?"
+docs = compression_retriever.invoke(query)
+
+# The reranker's score is often added to the document's metadata
+for doc in docs:
+    print(f"Content: {doc.page_content[:150]}...")
+    print(f"Reranker Score: {doc.metadata.get('relevance_score')}\n---")
