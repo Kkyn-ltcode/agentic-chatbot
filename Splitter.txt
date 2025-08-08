@@ -1,1 +1,3 @@
-const thinkRegex = /(?:“Thinking…|Thinking\.\.\.)(.*?) (?:…done thinking\.”|\.\.\.done thinking\.)/s;
+Hãy suy nghĩ từng bước một bằng tiếng Việt để tìm ra câu trả lời dựa trên ngữ cảnh đã cho. Sau đó, cung cấp câu trả lời cuối cùng cho người dùng, cũng bằng tiếng Việt.\n\n"
+     "Quy trình của bạn phải tuân theo cấu trúc sau:\n"
+     "<think>Suy nghĩ từng bước một ở đây...</think>\n
