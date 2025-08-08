@@ -1,3 +1,5 @@
+// ... (Your other components and state)
+
 <div className="bg-gray-100 p-4 md:p-6 flex-shrink-0 border-t border-gray-200">
   <div className="max-w-xl sm:max-w-2xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl mx-auto flex flex-col items-end space-y-4">
     <div className="flex w-full items-end">
