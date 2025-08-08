@@ -1,57 +1,12 @@
-<div className="bg-gray-100 p-4 md:p-6 flex-shrink-0 border-t border-gray-200">
-      <div className="max-w-xl sm:max-w-2xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl mx-auto flex flex-col items-end space-y-4">
-        <div className="flex w-full items-end">
--         <TextInput
--           ref={textareaRef}
--           inputText={inputText}
--           onInputChange={handleInputChange}
--           onKeyPress={handleKeyPress}
--           placeholder="Message My Chatbot..."
--         />
--         <button
--           onClick={handleSendMessage}
--           className="ml-4 p-3 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
--           disabled={isLoading || inputText.trim() === ''}
--         >
--           <svg
--             className="w-5 h-5"
--             fill="none"
--             stroke="currentColor"
--             viewBox="0 0 24 24"
--             xmlns="http://www.w3.org/2000/svg"
--           >
--             <path
--               strokeLinecap="round"
--               strokeLinejoin="round"
--               strokeWidth="2"
--               d="M14 5l7 7m0 0l-7 7m7-7H3"
--           ></path>
--         </svg>
--         </button>
-+         <div className="flex-grow relative mr-4">
-+           <Mic className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
-+           <TextInput
-+             ref={textareaRef}
-+             inputText={inputText}
-+             onInputChange={handleInputChange}
-+             onKeyPress={handleKeyPress}
-+             placeholder="Message My Chatbot..."
-+           />
-+         </div>
-+         <button
-+           onClick={handleSendMessage}
-+           className="p-3 bg-blue-600 text-white rounded-full shadow-sm hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-+           disabled={isLoading || inputText.trim() === ''}
-+         >
-+           <Send className="w-5 h-5" />
-+         </button>
-        </div>
-        <ModelDropdown
-          selectedModel={selectedModel}
-          availableModels={availableModels}
-          onSelectModel={setSelectedModel}
-        />
-      </div>
-    </div>
-  );
-};
+const rawMarkdown = node.children.reduce((acc, child) => {
+if (child.type === 'text') {
+return acc + child.value;
+if (child. type === 'paragraph' && child.children.length > 0) {
+// Handle cases where a paragraph contains a single text
+node
+return acc + child.children[0].value;
+3,
+｝
+// For other complex nodes like lists, return the full text value
+return acc + (child.value || '');
+'');
