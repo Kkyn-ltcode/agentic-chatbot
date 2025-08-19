@@ -1,4 +1,66 @@
--        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-        <div className="p-2 border border-white rounded-full">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+import React, { useState, useRef, useEffect } from 'react';
+import { Plus, SlidersHorizontal, ChevronUp } from 'lucide-react';
+import ModelDropdown from './ModelDropdown'; // Assuming you have this component
+
+const InputBar = ({ inputText, setInputText, handleSendMessage, selectedModel, availableModels, setSelectedModel }) => {
+  const textareaRef = useRef(null);
+
+  const handleInputChange = (e) => {
+    setInputText(e.target.value);
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [inputText]);
+
+  return (
+    <div className="flex-shrink-0 flex items-center p-4">
+      <div className="flex w-full items-end mx-auto max-w-5xl rounded-3xl shadow-lg border border-gray-200" style={{ boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}>
+        <div className="flex items-center p-2 space-x-2">
+          <button className="p-2 bg-gray-100 rounded-full transition-colors duration-200 hover:bg-gray-200" style={{ boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)' }}>
+            <Plus size={18} className="text-gray-600" />
+          </button>
+          <button className="p-2 bg-gray-100 rounded-full transition-colors duration-200 hover:bg-gray-200" style={{ boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)' }}>
+            <SlidersHorizontal size={18} className="text-gray-600" />
+          </button>
         </div>
+        <textarea
+          ref={textareaRef}
+          className="flex-grow resize-none py-3 px-4 outline-none text-base"
+          style={{ fontFamily: "'Google Sans Display', 'Google Sans', sans-serif" }}
+          rows="1"
+          value={inputText}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyPress}
+          placeholder="Reply to Claude..."
+        />
+        <div className="flex items-center p-2 space-x-2">
+          <ModelDropdown
+            selectedModel={selectedModel}
+            availableModels={availableModels}
+            onSelectModel={setSelectedModel}
+          />
+          <button
+            onClick={handleSendMessage}
+            className="p-3 bg-red-300 rounded-full text-white transition-colors duration-200 hover:bg-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!inputText.trim()}
+          >
+            <ChevronUp size={24} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default InputBar;
