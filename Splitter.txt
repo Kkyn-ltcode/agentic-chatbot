@@ -1,58 +1,36 @@
-import React, { useState, useRef, useEffect } from 'react';
+const customComponents = {
+  // ... (rest of the main customComponents object)
 
-// ... (your existing style objects)
+  // Styles the table data cells
+  td: ({ node, ...props }) => {
+-    return (
+-      <td className="p-2 border border-gray-300 dark:border-gray-600 align-top">
+-        {props.children}
+-      </td>
+-    )
++    // Extract the markdown content by joining all the node's children
++    const rawMarkdown = node.children.reduce((acc, child) => {
++      // The "text" node type contains the raw string
++      if (child.type === 'text') {
++        return acc + child.value;
++      }
++      // Handle elements like paragraphs or lists
++      if (child.children) {
++        // Recursively extract text from complex children
++        const childText = child.children.map(c => c.value || '').join('');
++        return acc + childText;
++      }
++      return acc;
++    }, '');
 
-// --- New Style for the SVG Arrow ---
-const svgArrowStyle = {
-    width: '10px',
-    height: '10px',
-    fill: '#666', // Matches the text color
-    transition: 'transform 0.2s',
++    return (
++      <td className="p-2 border border-gray-300 dark:border-gray-600 align-top text-sm">
++        <ReactMarkdown components={tdCustomComponents} remarkPlugins={[remarkGfm]}>
++          {rawMarkdown}
++        </ReactMarkdown>
++      </td>
++    );
+  },
+
+  // ... (rest of the main customComponents object)
 };
-
-const ChatInputBox = () => {
-    // ... (your existing state and logic)
-
-    return (
-        <div style={chatInputContainerStyle}>
-            {/* Top Layer */}
-            <div style={topLayerStyle}>
-                <input
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Reply to Claude..."
-                    style={chatInputFieldStyle}
-                />
-            </div>
-            {/* Bottom Layer */}
-            <div style={bottomLayerStyle}>
-                <div style={chatInputLeftStyle}>
-                    <button style={iconButtonStyle}>+</button>
-                    <button style={{ ...iconButtonStyle, ...separatorIconStyle }}>⇄</button>
-                </div>
-                <div style={{ ...chatInputRightStyle, position: 'relative' }} ref={dropdownRef}>
-                    <div style={modelSelectStyle} onClick={handleModelSelectClick}>
-                        <span>{selectedModel}</span>
-                        <div style={{ 
-                            ...svgArrowStyle,
-                            transform: isDropdownOpen ? 'rotate(0deg)' : 'rotate(180deg)' 
-                        }}>
-                            <svg fill="currentColor" viewBox="-6.5 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg">
-                                <title>dropdown</title>
-                                <path d="M18.813 11.406l-7.906 9.906c-0.75 0.906-1.906 0.906-2.625 0l-7.906-9.906c-0.75-0.938-0.375-1.656 0.781-1.656h16.875c1.188 0 1.531 0.719 0.781 1.656z"></path>
-                            </svg>
-                        </div>
-                    </div>
-                    {isDropdownOpen && (
-                        <div style={dropdownMenuStyle}>
-                            {/* ... (dropdown options) */}
-                        </div>
-                    )}
-                    <button style={sendButtonStyle}>↑</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-export default ChatInputBox;
