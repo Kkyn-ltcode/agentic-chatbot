@@ -1,316 +1,58 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const chatInputContainerStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  padding: '12px',
-  backgroundColor: '#f7f6f4',
-  borderRadius: '20px',
-  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)',
-  border: '1px solid #e1e0de',
-  maxWidth: '1900px',
-  fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-};
+// ... (your existing style objects)
 
-const topLayerStyle = {
-  paddingBottom: '10px',
-};
-
-const chatInputFieldStyle = {
-  width: '100%',
-  border: 'none',
-  background: 'transparent',
-  outline: 'none',
-  fontSize: '16px',
-  color: '#333',
-};
-
-const bottomLayerStyle = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  paddingTop: '10px',
-};
-
-const chatInputLeftStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-};
-
-const chatInputRightStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-};
-
-const iconButtonStyle = {
-  backgroundColor: 'transparent',
-  border: '1px solid #d4d4d4',
-  borderRadius: '8px',
-  width: '36px',
-  height: '36px',
-  fontSize: '24px',
-  color: '#666',
-  cursor: 'pointer',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center',
-  transition: 'background-color 0.2s',
-};
-
-const separatorIconStyle = {
-  fontSize: '16px',
-  fontWeight: 'bold',
-};
-
-const modelSelectStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '4px',
-  color: '#666',
-  fontSize: '14px',
-  cursor: 'pointer',
-};
-
-const dropdownArrowStyle = {
-  fontSize: '12px',
-  transform: 'rotate(180deg)',
-};
-
-const sendButtonStyle = {
-  backgroundColor: '#e5b6a7',
-  color: 'white',
-  border: 'none',
-  borderRadius: '12px',
-  width: '40px',
-  height: '40px',
-  fontSize: '20px',
-  cursor: 'pointer',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center',
-  transition: 'background-color 0.2s',
-};
-
-const dropdownMenuStyle = {
-  position: 'absolute',
-  bottom: '100%',
-  left: '50%',
-  transform: 'translateX(-50%) translateY(-10px)', // Adjust vertical position
-  backgroundColor: '#FFFFFF',
-  borderRadius: '12px',
-  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-  padding: '8px',
-  zIndex: 10,
-  width: '240px', // Adjust width as needed
-};
-
-const dropdownOptionStyle = {
-  padding: '10px 12px',
-  borderRadius: '8px',
-  cursor: 'pointer',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  transition: 'background-color 0.2s',
-};
-
-const dropdownOptionHoverStyle = {
-  backgroundColor: '#f0f0f0',
-};
-
-const modelNameStyle = {
-  fontSize: '14px',
-  fontWeight: '500',
-};
-
-const modelDescriptionStyle = {
-  fontSize: '12px',
-  color: '#888',
-};
-
-const proBadgeStyle = {
-  fontSize: '10px',
-  fontWeight: 'bold',
-  color: '#6e45ba',
-  backgroundColor: '#eee9f9',
-  padding: '2px 6px',
-  borderRadius: '10px',
-  alignSelf: 'flex-start',
-};
-
-const selectedIconStyle = {
-  fontSize: '16px',
-  color: '#007bff', // Use a blue checkmark color
+// --- New Style for the SVG Arrow ---
+const svgArrowStyle = {
+    width: '10px',
+    height: '10px',
+    fill: '#666', // Matches the text color
+    transition: 'transform 0.2s',
 };
 
 const ChatInputBox = () => {
-  const [inputValue, setInputValue] = useState('');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('Claude Sonnet 4');
-  const dropdownRef = useRef(null);
-  const textareaRef = useRef(null);
-  const MAX_HEIGHT = 200;
+    // ... (your existing state and logic)
 
-  useEffect(() => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-          textarea.style.height = 'auto';
-          const newHeight = Math.min(textarea.scrollHeight, MAX_HEIGHT);
-          textarea.style.height = `${newHeight}px`;
-          textarea.style.overflowY = textarea.scrollHeight > MAX_HEIGHT ? 'auto' : 'hidden';
-      }
-  }, [inputValue]);
-
-  const handleInputChange = (event) => {
-      setInputValue(event.target.value);
-  };
-
-  const handleModelSelectClick = () => {
-    setIsDropdownOpen(!isDropdownOpen);
-  };
-
-  const handleModelSelect = model => {
-    setSelectedModel(model);
-    setIsDropdownOpen(false);
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = event => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
-
-  return (
-    <div style={chatInputContainerStyle}>
-      {/* Top Layer */}
-      <div style={topLayerStyle}>
-        <textarea
-          ref={textareaRef}
-          value={inputValue}
-          onChange={handleInputChange}
-          placeholder='Reply to Claude...'
-          style={chatInputFieldStyle}
-          rows='1'
-        />
-      </div>
-      {/* Bottom Layer */}
-      <div style={bottomLayerStyle}>
-        <div style={chatInputLeftStyle}>
-          <button style={iconButtonStyle}>+</button>
-          <button style={{ ...iconButtonStyle, ...separatorIconStyle }}>
-            ⇄
-          </button>
-        </div>
-        <div
-          style={{ ...chatInputRightStyle, position: 'relative' }}
-          ref={dropdownRef}
-        >
-          <div style={modelSelectStyle} onClick={handleModelSelectClick}>
-            <span>{selectedModel}</span>
-            <span
-              style={{
-                ...dropdownArrowStyle,
-                transform: isDropdownOpen ? 'rotate(0deg)' : 'rotate(180deg)',
-              }}
-            >
-              ↓
-            </span>
-          </div>
-          {isDropdownOpen && (
-            <div style={dropdownMenuStyle}>
-              <div
-                style={dropdownOptionStyle}
-                onMouseEnter={e =>
-                  (e.currentTarget.style.backgroundColor =
-                    dropdownOptionHoverStyle.backgroundColor)
-                }
-                onMouseLeave={e =>
-                  (e.currentTarget.style.backgroundColor = 'transparent')
-                }
-                onClick={() => handleModelSelect('Claude Opus 4.1')}
-              >
-                <span
-                  style={{
-                    ...modelNameStyle,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span>Claude Opus 4.1</span>
-                  <span style={proBadgeStyle}>PRO</span>
-                </span>
-                <span style={modelDescriptionStyle}>
-                  Powerful, large model for complex challenges
-                </span>
-              </div>
-              <div
-                style={dropdownOptionStyle}
-                onMouseEnter={e =>
-                  (e.currentTarget.style.backgroundColor =
-                    dropdownOptionHoverStyle.backgroundColor)
-                }
-                onMouseLeave={e =>
-                  (e.currentTarget.style.backgroundColor = 'transparent')
-                }
-                onClick={() => handleModelSelect('Claude Sonnet 4')}
-              >
-                <span
-                  style={{
-                    ...modelNameStyle,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span>Claude Sonnet 4</span>
-                  {selectedModel === 'Claude Sonnet 4' && (
-                    <span style={selectedIconStyle}>✓</span>
-                  )}
-                </span>
-                <span style={modelDescriptionStyle}>
-                  Smart, efficient model for everyday use
-                </span>
-              </div>
-              <div
-                style={{ ...dropdownOptionStyle, color: '#888' }}
-                onMouseEnter={e =>
-                  (e.currentTarget.style.backgroundColor =
-                    dropdownOptionHoverStyle.backgroundColor)
-                }
-                onMouseLeave={e =>
-                  (e.currentTarget.style.backgroundColor = 'transparent')
-                }
-              >
-                <span
-                  style={{
-                    ...modelNameStyle,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span>More models</span>
-                  <span>&gt;</span>
-                </span>
-              </div>
+    return (
+        <div style={chatInputContainerStyle}>
+            {/* Top Layer */}
+            <div style={topLayerStyle}>
+                <input
+                    type="text"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    placeholder="Reply to Claude..."
+                    style={chatInputFieldStyle}
+                />
             </div>
-          )}
-          <button style={sendButtonStyle}>↑</button>
+            {/* Bottom Layer */}
+            <div style={bottomLayerStyle}>
+                <div style={chatInputLeftStyle}>
+                    <button style={iconButtonStyle}>+</button>
+                    <button style={{ ...iconButtonStyle, ...separatorIconStyle }}>⇄</button>
+                </div>
+                <div style={{ ...chatInputRightStyle, position: 'relative' }} ref={dropdownRef}>
+                    <div style={modelSelectStyle} onClick={handleModelSelectClick}>
+                        <span>{selectedModel}</span>
+                        <div style={{ 
+                            ...svgArrowStyle,
+                            transform: isDropdownOpen ? 'rotate(0deg)' : 'rotate(180deg)' 
+                        }}>
+                            <svg fill="currentColor" viewBox="-6.5 0 32 32" version="1.1" xmlns="http://www.w3.org/2000/svg">
+                                <title>dropdown</title>
+                                <path d="M18.813 11.406l-7.906 9.906c-0.75 0.906-1.906 0.906-2.625 0l-7.906-9.906c-0.75-0.938-0.375-1.656 0.781-1.656h16.875c1.188 0 1.531 0.719 0.781 1.656z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    {isDropdownOpen && (
+                        <div style={dropdownMenuStyle}>
+                            {/* ... (dropdown options) */}
+                        </div>
+                    )}
+                    <button style={sendButtonStyle}>↑</button>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 };
-
 export default ChatInputBox;
