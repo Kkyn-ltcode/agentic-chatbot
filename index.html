@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat Input Box</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      body {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          margin: 0;
+          background-color: #f0f0f0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chat-input-container">
+      <div class="top-layer">
+        <input
+          type="text"
+          placeholder="Reply to Claude..."
+          class="chat-input-field"
+        />
+      </div>
+      <div class="bottom-layer">
+        <div class="chat-input-left">
+          <button class="icon-button">+</button>
+          <button class="icon-button separator-icon">⇄</button>
+        </div>
+        <div class="chat-input-right">
+          <div class="model-select">
+            <span>Claude Sonnet 4</span>
+            <span class="dropdown-arrow">↓</span>
+          </div>
+          <button class="send-button">↑</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
