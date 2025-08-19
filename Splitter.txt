@@ -1,160 +1,316 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// ... (your existing style objects)
+const chatInputContainerStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  padding: '12px',
+  backgroundColor: '#f7f6f4',
+  borderRadius: '20px',
+  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)',
+  border: '1px solid #e1e0de',
+  maxWidth: '1900px',
+  fontFamily:
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+};
 
-// --- New Styles for the Dropdown Menu ---
+const topLayerStyle = {
+  paddingBottom: '10px',
+};
+
+const chatInputFieldStyle = {
+  width: '100%',
+  border: 'none',
+  background: 'transparent',
+  outline: 'none',
+  fontSize: '16px',
+  color: '#333',
+};
+
+const bottomLayerStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  paddingTop: '10px',
+};
+
+const chatInputLeftStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+};
+
+const chatInputRightStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+};
+
+const iconButtonStyle = {
+  backgroundColor: 'transparent',
+  border: '1px solid #d4d4d4',
+  borderRadius: '8px',
+  width: '36px',
+  height: '36px',
+  fontSize: '24px',
+  color: '#666',
+  cursor: 'pointer',
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'center',
+  transition: 'background-color 0.2s',
+};
+
+const separatorIconStyle = {
+  fontSize: '16px',
+  fontWeight: 'bold',
+};
+
+const modelSelectStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  color: '#666',
+  fontSize: '14px',
+  cursor: 'pointer',
+};
+
+const dropdownArrowStyle = {
+  fontSize: '12px',
+  transform: 'rotate(180deg)',
+};
+
+const sendButtonStyle = {
+  backgroundColor: '#e5b6a7',
+  color: 'white',
+  border: 'none',
+  borderRadius: '12px',
+  width: '40px',
+  height: '40px',
+  fontSize: '20px',
+  cursor: 'pointer',
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'center',
+  transition: 'background-color 0.2s',
+};
+
 const dropdownMenuStyle = {
-    position: 'absolute',
-    bottom: '100%',
-    left: '50%',
-    transform: 'translateX(-50%) translateY(-10px)', // Adjust vertical position
-    backgroundColor: '#FFFFFF',
-    borderRadius: '12px',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-    padding: '8px',
-    zIndex: 10,
-    width: '240px' // Adjust width as needed
+  position: 'absolute',
+  bottom: '100%',
+  left: '50%',
+  transform: 'translateX(-50%) translateY(-10px)', // Adjust vertical position
+  backgroundColor: '#FFFFFF',
+  borderRadius: '12px',
+  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+  padding: '8px',
+  zIndex: 10,
+  width: '240px', // Adjust width as needed
 };
 
 const dropdownOptionStyle = {
-    padding: '10px 12px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-    transition: 'background-color 0.2s'
+  padding: '10px 12px',
+  borderRadius: '8px',
+  cursor: 'pointer',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
+  transition: 'background-color 0.2s',
 };
 
 const dropdownOptionHoverStyle = {
-    backgroundColor: '#f0f0f0'
+  backgroundColor: '#f0f0f0',
 };
 
 const modelNameStyle = {
-    fontSize: '14px',
-    fontWeight: '500'
+  fontSize: '14px',
+  fontWeight: '500',
 };
 
 const modelDescriptionStyle = {
-    fontSize: '12px',
-    color: '#888'
+  fontSize: '12px',
+  color: '#888',
 };
 
 const proBadgeStyle = {
-    fontSize: '10px',
-    fontWeight: 'bold',
-    color: '#6e45ba',
-    backgroundColor: '#eee9f9',
-    padding: '2px 6px',
-    borderRadius: '10px',
-    alignSelf: 'flex-start'
+  fontSize: '10px',
+  fontWeight: 'bold',
+  color: '#6e45ba',
+  backgroundColor: '#eee9f9',
+  padding: '2px 6px',
+  borderRadius: '10px',
+  alignSelf: 'flex-start',
 };
 
 const selectedIconStyle = {
-    fontSize: '16px',
-    color: '#007bff' // Use a blue checkmark color
+  fontSize: '16px',
+  color: '#007bff', // Use a blue checkmark color
 };
-
-// ... (rest of the component and styles)
 
 const ChatInputBox = () => {
-    const [inputValue, setInputValue] = useState('');
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-    const [selectedModel, setSelectedModel] = useState('Claude Sonnet 4');
-    const textareaRef = useRef(null);
-    const dropdownRef = useRef(null);
-    const MAX_HEIGHT = 200;
+  const [inputValue, setInputValue] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('Claude Sonnet 4');
+  const dropdownRef = useRef(null);
+  const textareaRef = useRef(null);
+  const MAX_HEIGHT = 200;
 
-    // ... (useEffect for auto-resizing remains the same)
+  useEffect(() => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+          textarea.style.height = 'auto';
+          const newHeight = Math.min(textarea.scrollHeight, MAX_HEIGHT);
+          textarea.style.height = `${newHeight}px`;
+          textarea.style.overflowY = textarea.scrollHeight > MAX_HEIGHT ? 'auto' : 'hidden';
+      }
+  }, [inputValue]);
 
-    const handleModelSelectClick = () => {
-        setIsDropdownOpen(!isDropdownOpen);
-    };
+  const handleInputChange = (event) => {
+      setInputValue(event.target.value);
+  };
 
-    const handleModelSelect = (model) => {
-        setSelectedModel(model);
+  const handleModelSelectClick = () => {
+    setIsDropdownOpen(!isDropdownOpen);
+  };
+
+  const handleModelSelect = model => {
+    setSelectedModel(model);
+    setIsDropdownOpen(false);
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = event => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsDropdownOpen(false);
+      }
     };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                setIsDropdownOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
-    }, []);
-
-    return (
-        <div style={chatInputContainerStyle}>
-            {/* Top Layer */}
-            <div style={topLayerStyle}>
-                <textarea
-                    ref={textareaRef}
-                    value={inputValue}
-                    onChange={handleInputChange}
-                    placeholder="Reply to Claude..."
-                    style={chatInputFieldStyle}
-                    rows="1"
-                />
-            </div>
-            {/* Bottom Layer */}
-            <div style={bottomLayerStyle}>
-                <div style={chatInputLeftStyle}>
-                    <button style={iconButtonStyle}>+</button>
-                    <button style={{ ...iconButtonStyle, ...separatorIconStyle }}>⇄</button>
-                </div>
-                <div style={{ ...chatInputRightStyle, position: 'relative' }} ref={dropdownRef}>
-                    <div style={modelSelectStyle} onClick={handleModelSelectClick}>
-                        <span>{selectedModel}</span>
-                        <span style={{ ...dropdownArrowStyle, transform: isDropdownOpen ? 'rotate(0deg)' : 'rotate(180deg)' }}>↓</span>
-                    </div>
-                    {isDropdownOpen && (
-                        <div style={dropdownMenuStyle}>
-                            <div 
-                                style={dropdownOptionStyle}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = dropdownOptionHoverStyle.backgroundColor}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
-                                onClick={() => handleModelSelect('Claude Opus 4.1')}
-                            >
-                                <span style={{ ...modelNameStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span>Claude Opus 4.1</span>
-                                    <span style={proBadgeStyle}>PRO</span>
-                                </span>
-                                <span style={modelDescriptionStyle}>Powerful, large model for complex challenges</span>
-                            </div>
-                            <div 
-                                style={dropdownOptionStyle}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = dropdownOptionHoverStyle.backgroundColor}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
-                                onClick={() => handleModelSelect('Claude Sonnet 4')}
-                            >
-                                <span style={{ ...modelNameStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span>Claude Sonnet 4</span>
-                                    {selectedModel === 'Claude Sonnet 4' && <span style={selectedIconStyle}>✓</span>}
-                                </span>
-                                <span style={modelDescriptionStyle}>Smart, efficient model for everyday use</span>
-                            </div>
-                            <div 
-                                style={{ ...dropdownOptionStyle, color: '#888' }}
-                                onMouseEnter={e => e.currentTarget.style.backgroundColor = dropdownOptionHoverStyle.backgroundColor}
-                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
-                            >
-                                <span style={{ ...modelNameStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span>More models</span>
-                                    <span>&gt;</span>
-                                </span>
-                            </div>
-                        </div>
-                    )}
-                    <button style={sendButtonStyle}>↑</button>
-                </div>
-            </div>
+  return (
+    <div style={chatInputContainerStyle}>
+      {/* Top Layer */}
+      <div style={topLayerStyle}>
+        <textarea
+          ref={textareaRef}
+          value={inputValue}
+          onChange={handleInputChange}
+          placeholder='Reply to Claude...'
+          style={chatInputFieldStyle}
+          rows='1'
+        />
+      </div>
+      {/* Bottom Layer */}
+      <div style={bottomLayerStyle}>
+        <div style={chatInputLeftStyle}>
+          <button style={iconButtonStyle}>+</button>
+          <button style={{ ...iconButtonStyle, ...separatorIconStyle }}>
+            ⇄
+          </button>
         </div>
-    );
+        <div
+          style={{ ...chatInputRightStyle, position: 'relative' }}
+          ref={dropdownRef}
+        >
+          <div style={modelSelectStyle} onClick={handleModelSelectClick}>
+            <span>{selectedModel}</span>
+            <span
+              style={{
+                ...dropdownArrowStyle,
+                transform: isDropdownOpen ? 'rotate(0deg)' : 'rotate(180deg)',
+              }}
+            >
+              ↓
+            </span>
+          </div>
+          {isDropdownOpen && (
+            <div style={dropdownMenuStyle}>
+              <div
+                style={dropdownOptionStyle}
+                onMouseEnter={e =>
+                  (e.currentTarget.style.backgroundColor =
+                    dropdownOptionHoverStyle.backgroundColor)
+                }
+                onMouseLeave={e =>
+                  (e.currentTarget.style.backgroundColor = 'transparent')
+                }
+                onClick={() => handleModelSelect('Claude Opus 4.1')}
+              >
+                <span
+                  style={{
+                    ...modelNameStyle,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>Claude Opus 4.1</span>
+                  <span style={proBadgeStyle}>PRO</span>
+                </span>
+                <span style={modelDescriptionStyle}>
+                  Powerful, large model for complex challenges
+                </span>
+              </div>
+              <div
+                style={dropdownOptionStyle}
+                onMouseEnter={e =>
+                  (e.currentTarget.style.backgroundColor =
+                    dropdownOptionHoverStyle.backgroundColor)
+                }
+                onMouseLeave={e =>
+                  (e.currentTarget.style.backgroundColor = 'transparent')
+                }
+                onClick={() => handleModelSelect('Claude Sonnet 4')}
+              >
+                <span
+                  style={{
+                    ...modelNameStyle,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>Claude Sonnet 4</span>
+                  {selectedModel === 'Claude Sonnet 4' && (
+                    <span style={selectedIconStyle}>✓</span>
+                  )}
+                </span>
+                <span style={modelDescriptionStyle}>
+                  Smart, efficient model for everyday use
+                </span>
+              </div>
+              <div
+                style={{ ...dropdownOptionStyle, color: '#888' }}
+                onMouseEnter={e =>
+                  (e.currentTarget.style.backgroundColor =
+                    dropdownOptionHoverStyle.backgroundColor)
+                }
+                onMouseLeave={e =>
+                  (e.currentTarget.style.backgroundColor = 'transparent')
+                }
+              >
+                <span
+                  style={{
+                    ...modelNameStyle,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>More models</span>
+                  <span>&gt;</span>
+                </span>
+              </div>
+            </div>
+          )}
+          <button style={sendButtonStyle}>↑</button>
+        </div>
+      </div>
+    </div>
+  );
 };
+
 export default ChatInputBox;
