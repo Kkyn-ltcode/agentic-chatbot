@@ -1,100 +1,90 @@
-import React, { useState } from 'react';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import sqlite3
+import pandas as pd
 
-const Message = ({ message, isLast, db }) => {
-  const [showFeedbackForm, setShowFeedbackForm] = useState(false);
-  const [feedbackText, setFeedbackText] = useState('');
+# Method 1: Basic sqlite3 connection
+def read_sqlite_basic(db_path):
+    # Connect to the database
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # List all tables
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = cursor.fetchall()
+    print("Tables in database:", [table[0] for table in tables])
+    
+    # Read data from a specific table
+    table_name = "your_table_name"  # Replace with actual table name
+    cursor.execute(f"SELECT * FROM {table_name}")
+    rows = cursor.fetchall()
+    
+    # Get column names
+    column_names = [description[0] for description in cursor.description]
+    print("Columns:", column_names)
+    
+    # Close connection
+    conn.close()
+    
+    return rows, column_names
 
-  const handleSubmitFeedback = async () => {
-    if (!db || !feedbackText.trim() || !message.id) return;
+# Method 2: Using pandas (recommended for data analysis)
+def read_sqlite_pandas(db_path):
+    # Connect to database
+    conn = sqlite3.connect(db_path)
+    
+    # Get list of tables
+    tables_query = "SELECT name FROM sqlite_master WHERE type='table';"
+    tables_df = pd.read_sql_query(tables_query, conn)
+    print("Available tables:")
+    print(tables_df)
+    
+    # Read a specific table into DataFrame
+    table_name = "your_table_name"  # Replace with actual table name
+    df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+    
+    # Close connection
+    conn.close()
+    
+    return df
 
-    try {
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-      const messageDocRef = doc(db, `artifacts/${appId}/public/messages`, message.id);
+# Method 3: Read all tables
+def read_all_tables(db_path):
+    conn = sqlite3.connect(db_path)
+    
+    # Get all table names
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = [table[0] for table in cursor.fetchall()]
+    
+    # Read each table into a dictionary of DataFrames
+    all_tables = {}
+    for table in tables:
+        all_tables[table] = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        print(f"Table '{table}' has {len(all_tables[table])} rows")
+    
+    conn.close()
+    return all_tables
 
-      // Update the existing message document with the new feedback field
-      await updateDoc(messageDocRef, {
-        feedback: feedbackText,
-        feedbackTimestamp: serverTimestamp(),
-      });
-
-      // Hide the form and reset the text
-      setFeedbackText('');
-      setShowFeedbackForm(false);
-      console.log("Feedback submitted successfully!");
-
-    } catch (error) {
-      console.error("Error writing feedback to Firestore:", error);
-    }
-  };
-
-  const handleCancelFeedback = () => {
-    setFeedbackText('');
-    setShowFeedbackForm(false);
-  };
-
-  const isUser = message.sender === 'user';
-  const messageClass = isUser ? 'self-end bg-blue-600 text-white rounded-br-none' : 'self-start bg-gray-200 text-gray-900 rounded-bl-none';
-  
-  return (
-    <div className={`flex flex-col mb-4 max-w-lg ${isUser ? 'items-end' : 'items-start'}`}>
-      <div className={`p-4 rounded-xl shadow-md ${messageClass}`}>
-        {message.text}
-      </div>
-      {!isUser && isLast && (
-        <div className="flex items-center space-x-2 mt-2">
-          {/* ... existing Thumbs up/down, Copy buttons would go here ... */}
-          {/* Feedback Button */}
-          <button
-            onClick={() => setShowFeedbackForm(!showFeedbackForm)}
-            className="p-2 text-gray-500 hover:text-blue-600"
-            aria-label="Give feedback"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 2a10 10 0 0 0-9.8 11.2C2.8 14.5 4 16 5.5 16H8v-2a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2h2.5c1.5 0 2.7-1.5 2.3-2.8A10 10 0 0 0 12 2zM12 2a10 10 0 0 1 8.8 5.2c.4 1.3-.8 2.8-2.3 2.8H16v2a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-2H5.5C4 10 2.8 8.5 3.2 7.2A10 10 0 0 1 12 2z"/>
-            </svg>
-          </button>
-        </div>
-      )}
-      {/* Conditionally render the feedback form with submit and cancel buttons */}
-      {showFeedbackForm && (
-        <div className="mt-4 w-full">
-          <textarea
-            className="w-full p-2 border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-            rows="3"
-            placeholder="Tell us what you think..."
-            value={feedbackText}
-            onChange={(e) => setFeedbackText(e.target.value)}
-          />
-          <div className="flex justify-end space-x-2 mt-2">
-            <button
-              onClick={handleCancelFeedback}
-              className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-100"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSubmitFeedback}
-              disabled={!feedbackText.trim()}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
-            >
-              Submit
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default Message;
+# Example usage
+if __name__ == "__main__":
+    db_file = "example.db"  # Replace with your .db file path
+    
+    try:
+        # Method 1: Basic reading
+        print("=== Basic SQLite Reading ===")
+        rows, columns = read_sqlite_basic(db_file)
+        
+        # Method 2: Using pandas
+        print("\n=== Using Pandas ===")
+        df = read_sqlite_pandas(db_file)
+        print(df.head())
+        
+        # Method 3: Read all tables
+        print("\n=== All Tables ===")
+        all_data = read_all_tables(db_file)
+        
+    except sqlite3.Error as e:
+        print(f"SQLite error: {e}")
+    except FileNotFoundError:
+        print(f"Database file '{db_file}' not found")
+    except Exception as e:
+        print(f"Error: {e}")
