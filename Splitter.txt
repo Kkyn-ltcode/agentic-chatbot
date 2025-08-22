@@ -1,60 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
-// ...other imports
+@app.post("/user_checkin/{user_id}")
+async def user_checkin(user_id: str):
+    """
+    Endpoint for a user to signal they are active, storing the data in SQLite.
+    """
+    conn = get_db_connection()
+    c = conn.cursor()
+    # Using REPLACE INTO to either insert a new row or update an existing one
+    c.execute("REPLACE INTO active_sessions (user_id, last_access) VALUES (?, ?)", (user_id, datetime.now()))
+    conn.commit()
+    conn.close()
+    return {"message": "Checked in successfully"}
 
-const App = () => {
-  // Your existing userId state from localStorage
-  const [userId, setUserId] = useState(() => {
-    const storedUserId = localStorage.getItem('chatbotUserId');
-    if (storedUserId) {
-      return storedUserId;
-    }
-    const newId = crypto.randomUUID();
-    localStorage.setItem('chatbotUserId', newId);
-    return newId;
-  });
-
-  // A new state to hold the count of active users
-  const [userCount, setUserCount] = useState(0);
-
-  // ...other states and functions
-
-  useEffect(() => {
-    // We only proceed if a userId is available
-    if (userId) {
-      const checkInAndFetchCount = async () => {
-        try {
-          // 1. Send a 'check-in' request to the backend using the userId
-          await fetch(`/user_checkin/${userId}`, { method: 'POST' });
-
-          // 2. Fetch the updated active user count
-          const response = await fetch('/active_users');
-          const data = await response.json();
-          setUserCount(data.count);
-        } catch (error) {
-          console.error("Failed to update active users:", error);
-        }
-      };
-
-      // Run the check-in immediately when the component mounts
-      checkInAndFetchCount();
-
-      // Set up a polling interval to run every 10 seconds.
-      // This is slightly less than the 30-second server timeout to ensure consistent tracking.
-      const intervalId = setInterval(checkInAndFetchCount, 10000);
-
-      // Clean up the interval when the component unmounts
-      return () => clearInterval(intervalId);
-    }
-  }, [userId]); // The effect re-runs if the userId changes
-
-  return (
-    // ... your existing JSX code
-    // Add this line wherever you want to display the count
-    <div className="text-sm text-gray-500 mt-2">
-      Active users: {userCount}
-    </div>
-    // ... rest of your JSX
-  );
-};
-
-export default App;
+@app.get("/active_users")
+async def get_active_users():
+    """
+    Endpoint to get the count of currently active users from SQLite.
+    """
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # Calculate the time threshold for active users (e.g., last 30 seconds)
+    active_threshold = datetime.now() - timedelta(seconds=30)
+    
+    # Query the count of users whose last access was within the threshold
+    c.execute("SELECT COUNT(user_id) FROM active_sessions WHERE last_access > ?", (active_threshold,))
+    count = c.fetchone()[0]
+    conn.close()
+    
+    return {"count": count}
