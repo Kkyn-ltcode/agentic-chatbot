@@ -1,16 +1,29 @@
 import re
+from typing import Generator
 
 def html_to_markdown(text: str) -> str:
-    # Normalize broken tags first
-    text = text.replace("<br", "<br>")  # fix incomplete <br
-    text = text.replace("<ul", "<ul>")  # same for ul
-    text = text.replace("<li", "<li>")  # same for li
-    text = text.replace("</li", "</li>")
-    text = text.replace("</ul", "</ul>")
-
-    # Then convert to markdown
+    # Convert fixed tags to Markdown
     text = re.sub(r"<br\s*/?>", "\n", text)
     text = re.sub(r"</?ul>", "", text)
     text = re.sub(r"<li>(.*?)</li>", r"- \1\n", text)
-
     return text
+
+def stream_cleaned(chunks: Generator[str, None, None]) -> Generator[str, None, None]:
+    buffer = ""
+    for chunk in chunks:
+        buffer += chunk
+
+        # If the buffer ends with a partial tag, don't yield yet
+        if re.search(r"<[^>]*$", buffer):  
+            continue  
+
+        # Safe to clean + yield
+        cleaned = html_to_markdown(buffer)
+        yield cleaned
+
+        # reset buffer after flushing
+        buffer = ""
+
+    # flush whatever remains at the end
+    if buffer:
+        yield html_to_markdown(buffer)
