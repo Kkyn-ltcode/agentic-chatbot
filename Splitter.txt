@@ -1,71 +1,66 @@
 import logging
-from typing import List
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-# ... other imports
+import re
+from fastapi import FastAPI
 
-# 1. Create a custom logging filter to exclude specific endpoints
-class EndpointFilter(logging.Filter):
-    def __init__(self, endpoints_to_exclude: List[str], name=""):
-        super().__init__(name)
-        # Store a set of request lines to be filtered for faster lookup
-        self.request_lines_to_exclude = {
-            f"GET {e}" for e in endpoints_to_exclude
-        } | {
-            f"POST {e}" for e in endpoints_to_exclude
-        }
-
-    def filter(self, record):
-        try:
-            # The full request line is the second argument in the log record's message args
-            request_line = record.args[1]
-            # Strip off any protocol versions like "HTTP/1.1"
-            if request_line.endswith(" HTTP/1.1"):
-                request_line = request_line[:-9].strip()
-            
-            # Now, check if this precise request line is in our exclusion set
-            return request_line not in self.request_lines_to_exclude
-        except (IndexError, AttributeError):
-            return True
-
-# Create FastAPI app instance
 app = FastAPI()
 
-# 2. Get the uvicorn.access logger and apply the filter
-access_logger = logging.getLogger("uvicorn.access")
-
-# Clear existing handlers to prevent log duplication, and add a custom one
-access_logger.handlers.clear()
-access_logger.propagate = False
-access_handler = logging.StreamHandler()
-
-# Define the precise list of endpoints you want to filter out
-# Note: Path parameters like {user_id} need to be handled carefully.
-# We'll filter based on the base path.
-endpoints_to_filter = ["/active_users", "/user_checkin"]
-access_handler.addFilter(EndpointFilter(endpoints_to_filter))
-
-# Now, set the format for this handler, including the timestamp
-formatter = logging.Formatter(
-    fmt='%(levelprefix)s %(asctime)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-access_handler.setFormatter(formatter)
-access_logger.addHandler(access_handler)
-
-# 3. Add CORS middleware (your existing code)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# --- UUID regex ---
+UUID_PATTERN = (
+    r"[0-9a-fA-F]{8}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{12}"
 )
 
-# ... your API endpoints will follow here, e.g.,
-# @app.post("/user_checkin/{user_id}")
-# ...
-# @app.get("/active_users")
-# ...
-# @app.get("/conversation/{user_id}/{conversation_id}")
-# ...
+class EndpointFilter(logging.Filter):
+    def __init__(self, prefixes: list[str], extra_block: list[str] = None):
+        super().__init__()
+        self.blocked_patterns = []
+        
+        # Prefix rules → match ANY method + prefix + UUID
+        for prefix in prefixes:
+            self.blocked_patterns.append(
+                re.compile(fr'\"[A-Z]+ {prefix}{UUID_PATTERN}')
+            )
+        
+        # Extra block rules (full regex applied directly)
+        if extra_block:
+            self.blocked_patterns += [re.compile(p) for p in extra_block]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        for pattern in self.blocked_patterns:
+            if pattern.search(msg):
+                return False  # block this log
+        return True
+
+
+# --- Apply to uvicorn.access logger ---
+logging.getLogger("uvicorn.access").addFilter(
+    EndpointFilter(
+        prefixes=[
+            r"/conversation/",   # matches /conversation/<UUID> (any method)
+            r"/chat/",           # matches /chat/<UUID> (any method)
+        ],
+        extra_block=[
+            r'GET /health',
+            r'GET /favicon.ico'
+        ]
+    )
+)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/conversation/{conv_id}")
+async def conversation(conv_id: str):
+    return {"conversation": conv_id}
+
+
+@app.post("/chat/{chat_id}")
+async def chat(chat_id: str):
+    return {"chat": chat_id}
