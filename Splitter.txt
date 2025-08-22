@@ -1,10 +1,16 @@
 import re
 
 def html_to_markdown(text: str) -> str:
-    # Replace <br> with line breaks
+    # Normalize broken tags first
+    text = text.replace("<br", "<br>")  # fix incomplete <br
+    text = text.replace("<ul", "<ul>")  # same for ul
+    text = text.replace("<li", "<li>")  # same for li
+    text = text.replace("</li", "</li>")
+    text = text.replace("</ul", "</ul>")
+
+    # Then convert to markdown
     text = re.sub(r"<br\s*/?>", "\n", text)
-    # Replace <ul> and </ul> with nothing
     text = re.sub(r"</?ul>", "", text)
-    # Replace <li> with markdown bullet points
     text = re.sub(r"<li>(.*?)</li>", r"- \1\n", text)
+
     return text
