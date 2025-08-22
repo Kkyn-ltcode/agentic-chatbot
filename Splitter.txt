@@ -11,14 +11,11 @@ class EndpointFilter(logging.Filter):
         self.endpoints_to_exclude = endpoints_to_exclude
 
     def filter(self, record):
-        # We check if the request path contains any of our excluded endpoints
         try:
-            # The request path is usually in the message args
-            request_path = record.args[2].split(" ")[1] # e.g., "GET /my-path HTTP/1.1" -> "/my-path"
-            for endpoint in self.endpoints_to_exclude:
-                if request_path.startswith(endpoint):
-                    return False
-            return True
+            # The request path is the third argument in the log record's message args
+            request_path = record.args[2].split(" ")[1].split("?")[0]
+            # Check if the exact path is in the list of endpoints to exclude
+            return request_path not in self.endpoints_to_exclude
         except (IndexError, AttributeError):
             # Fallback for unexpected log formats
             return True
@@ -30,12 +27,12 @@ app = FastAPI()
 access_logger = logging.getLogger("uvicorn.access")
 
 # Clear existing handlers to prevent log duplication, and add a custom one
-# This ensures that the custom filter is applied correctly.
 access_logger.handlers.clear()
 access_logger.propagate = False
 access_handler = logging.StreamHandler()
 
-# Define the list of endpoints you want to filter out
+# Define the precise list of endpoints you want to filter out
+# The paths must match exactly what's in the browser's request
 endpoints_to_filter = ["/user_checkin", "/active_users"]
 access_handler.addFilter(EndpointFilter(endpoints_to_filter))
 
@@ -48,7 +45,6 @@ access_handler.setFormatter(formatter)
 access_logger.addHandler(access_handler)
 
 # 3. Add CORS middleware (your existing code)
-# You should still place this right after app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
