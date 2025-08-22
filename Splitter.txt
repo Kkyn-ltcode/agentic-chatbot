@@ -8,16 +8,24 @@ from fastapi.middleware.cors import CORSMiddleware
 class EndpointFilter(logging.Filter):
     def __init__(self, endpoints_to_exclude: List[str], name=""):
         super().__init__(name)
-        self.endpoints_to_exclude = endpoints_to_exclude
+        # Store a set of request lines to be filtered for faster lookup
+        self.request_lines_to_exclude = {
+            f"GET {e}" for e in endpoints_to_exclude
+        } | {
+            f"POST {e}" for e in endpoints_to_exclude
+        }
 
     def filter(self, record):
         try:
-            # The request path is the third argument in the log record's message args
-            request_path = record.args[2].split(" ")[1].split("?")[0]
-            # Check if the exact path is in the list of endpoints to exclude
-            return request_path not in self.endpoints_to_exclude
+            # The full request line is the second argument in the log record's message args
+            request_line = record.args[1]
+            # Strip off any protocol versions like "HTTP/1.1"
+            if request_line.endswith(" HTTP/1.1"):
+                request_line = request_line[:-9].strip()
+            
+            # Now, check if this precise request line is in our exclusion set
+            return request_line not in self.request_lines_to_exclude
         except (IndexError, AttributeError):
-            # Fallback for unexpected log formats
             return True
 
 # Create FastAPI app instance
@@ -32,8 +40,9 @@ access_logger.propagate = False
 access_handler = logging.StreamHandler()
 
 # Define the precise list of endpoints you want to filter out
-# The paths must match exactly what's in the browser's request
-endpoints_to_filter = ["/user_checkin", "/active_users"]
+# Note: Path parameters like {user_id} need to be handled carefully.
+# We'll filter based on the base path.
+endpoints_to_filter = ["/active_users", "/user_checkin"]
 access_handler.addFilter(EndpointFilter(endpoints_to_filter))
 
 # Now, set the format for this handler, including the timestamp
@@ -52,3 +61,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ... your API endpoints will follow here, e.g.,
+# @app.post("/user_checkin/{user_id}")
+# ...
+# @app.get("/active_users")
+# ...
+# @app.get("/conversation/{user_id}/{conversation_id}")
+# ...
