@@ -1,43 +1,25 @@
-import logging
-from typing import List
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-# ... other imports
-
-# Create a custom logging filter to exclude specific endpoints
-class EndpointFilter(logging.Filter):
-    def __init__(self, endpoints_to_exclude: List[str]):
-        self.endpoints_to_exclude = endpoints_to_exclude
-
-    def filter(self, record):
-        if not hasattr(record, "args") or len(record.args) < 3:
-            return True
-        request_line = record.args[2]
-        # Check if any of the endpoints to exclude are in the request line
-        for endpoint in self.endpoints_to_exclude:
-            if endpoint in request_line:
-                return False
-        return True
-
-# Create a custom handler to apply the filter
-class CustomLogHandler(logging.StreamHandler):
-    def __init__(self, stream=None, endpoints_to_exclude: List[str] = None):
-        if endpoints_to_exclude is None:
-            endpoints_to_exclude = []
-        super().__init__(stream)
-        self.addFilter(EndpointFilter(endpoints_to_exclude))
-
-# Create FastAPI app instance
-app = FastAPI()
-
-# Get the uvicorn.access logger
-access_logger = logging.getLogger("uvicorn.access")
-# Clear existing handlers to prevent duplicate logs
-access_logger.handlers = []
-
-# Add your custom handler, passing the list of endpoints to be filtered
-endpoints_to_filter = ["/active_users", "/user_checkin"]
-access_logger.addHandler(CustomLogHandler(endpoints_to_exclude=endpoints_to_filter))
-
-# Configure CORS
-# ... your CORS middleware setup
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "default": {
+      "()": "uvicorn.logging.DefaultFormatter",
+      "fmt": "[%(levelname)s] [%(asctime)s] %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S"
+    }
+  },
+  "handlers": {
+    "default": {
+      "formatter": "default",
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stderr"
+    }
+  },
+  "loggers": {
+    "uvicorn.error": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    }
+  }
+}
