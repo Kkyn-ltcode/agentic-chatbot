@@ -1,31 +1,60 @@
-# Place these at the top with other imports
-import asyncio
-from datetime import datetime, timedelta
+import React, { useState, useEffect, useRef } from 'react';
+// ...other imports
 
-# Create a simple in-memory dictionary to store active users and their last activity time.
-# Keys will be the user ID, values will be the timestamp.
-active_users = {}
-# Active users are considered active if they've checked in within the last 30 seconds
-ACTIVE_TIMEOUT_SECONDS = 30
+const App = () => {
+  // Your existing userId state from localStorage
+  const [userId, setUserId] = useState(() => {
+    const storedUserId = localStorage.getItem('chatbotUserId');
+    if (storedUserId) {
+      return storedUserId;
+    }
+    const newId = crypto.randomUUID();
+    localStorage.setItem('chatbotUserId', newId);
+    return newId;
+  });
 
-@app.post("/user_checkin/{user_id}")
-async def user_checkin(user_id: str):
-    """
-    Endpoint for a user to signal they are active.
-    """
-    active_users[user_id] = datetime.now()
-    return {"message": "Checked in successfully"}
+  // A new state to hold the count of active users
+  const [userCount, setUserCount] = useState(0);
 
-@app.get("/active_users")
-async def get_active_users():
-    """
-    Endpoint to get the count of currently active users.
-    """
-    # Clean up old users. A user is considered inactive if their last check-in was > ACTIVE_TIMEOUT_SECONDS ago.
-    now = datetime.now()
-    users_to_remove = [user_id for user_id, last_seen in active_users.items() if (now - last_seen).total_seconds() > ACTIVE_TIMEOUT_SECONDS]
-    for user_id in users_to_remove:
-        if user_id in active_users: # Check again to prevent KeyError
-            del active_users[user_id]
-            
-    return {"count": len(active_users)}
+  // ...other states and functions
+
+  useEffect(() => {
+    // We only proceed if a userId is available
+    if (userId) {
+      const checkInAndFetchCount = async () => {
+        try {
+          // 1. Send a 'check-in' request to the backend using the userId
+          await fetch(`/user_checkin/${userId}`, { method: 'POST' });
+
+          // 2. Fetch the updated active user count
+          const response = await fetch('/active_users');
+          const data = await response.json();
+          setUserCount(data.count);
+        } catch (error) {
+          console.error("Failed to update active users:", error);
+        }
+      };
+
+      // Run the check-in immediately when the component mounts
+      checkInAndFetchCount();
+
+      // Set up a polling interval to run every 10 seconds.
+      // This is slightly less than the 30-second server timeout to ensure consistent tracking.
+      const intervalId = setInterval(checkInAndFetchCount, 10000);
+
+      // Clean up the interval when the component unmounts
+      return () => clearInterval(intervalId);
+    }
+  }, [userId]); // The effect re-runs if the userId changes
+
+  return (
+    // ... your existing JSX code
+    // Add this line wherever you want to display the count
+    <div className="text-sm text-gray-500 mt-2">
+      Active users: {userCount}
+    </div>
+    // ... rest of your JSX
+  );
+};
+
+export default App;
