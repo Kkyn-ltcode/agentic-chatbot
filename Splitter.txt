@@ -1,34 +1,74 @@
-version: 1
-disable_existing_loggers: False
+import logging
+import re
+from datetime import datetime
+from fastapi import FastAPI
 
-formatters:
-  custom:
-    format: "[%(asctime)s] %(message)s"
-    datefmt: "%Y-%m-%d %H:%M:%S"
+app = FastAPI()
 
-filters:
-  block_endpoints:
-    (): my_logging.EndpointFilter
-    prefixes:
-      - "/conversation/"
-      - "/chat/"
-    extra_block:
-      - "GET /health"
-      - "GET /favicon.ico"
+# --- UUID regex ---
+UUID_PATTERN = (
+    r"[0-9a-fA-F]{8}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{12}"
+)
 
-handlers:
-  console:
-    class: logging.StreamHandler
-    formatter: custom
-    filters: [block_endpoints]
-    stream: ext://sys.stdout
+class EndpointFilter(logging.Filter):
+    def __init__(self, prefixes: list[str], extra_block: list[str] = None):
+        super().__init__()
+        self.blocked_patterns = []
+        
+        # Prefix rules → match ANY method + prefix + UUID
+        for prefix in prefixes:
+            self.blocked_patterns.append(
+                re.compile(fr'\"[A-Z]+ {prefix}{UUID_PATTERN}')
+            )
+        
+        if extra_block:
+            self.blocked_patterns += [re.compile(p) for p in extra_block]
 
-loggers:
-  uvicorn.access:
-    level: INFO
-    handlers: [console]
-    propagate: False
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        for pattern in self.blocked_patterns:
+            if pattern.search(msg):
+                return False  # block this log
+        return True
 
-root:
-  level: INFO
-  handlers: [console]
+
+# --- Apply filter + formatter ---
+access_logger = logging.getLogger("uvicorn.access")
+access_logger.addFilter(
+    EndpointFilter(
+        prefixes=[
+            r"/conversation/",
+            r"/chat/",
+        ],
+        extra_block=[
+            r'GET /health',
+            r'GET /favicon.ico'
+        ]
+    )
+)
+
+# Custom formatter: time + IP + original message
+class CustomFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return f"[{time_str}] {record.getMessage()}"
+
+for handler in access_logger.handlers:
+    handler.setFormatter(CustomFormatter())
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+@app.get("/conversation/{conv_id}")
+async def conversation(conv_id: str):
+    return {"conversation": conv_id}
+
+@app.post("/chat/{chat_id}")
+async def chat(chat_id: str):
+    return {"chat": chat_id}
