@@ -2,17 +2,9 @@ import logging
 import re
 from datetime import datetime
 from fastapi import FastAPI
+from uvicorn.logging import DefaultFormatter  # <-- Uvicorn's color formatter
 
 app = FastAPI()
-
-# --- Colors ---
-COLORS = {
-    "INFO": "\033[92m",     # green
-    "WARNING": "\033[93m",  # yellow
-    "ERROR": "\033[91m",    # red
-    "DEBUG": "\033[94m",    # blue
-    "RESET": "\033[0m"      # reset color
-}
 
 # --- UUID regex ---
 UUID_PATTERN = (
@@ -28,7 +20,6 @@ class EndpointFilter(logging.Filter):
         super().__init__()
         self.blocked_patterns = []
         
-        # Prefix rules → match ANY method + prefix + UUID
         for prefix in prefixes:
             self.blocked_patterns.append(
                 re.compile(fr'\"[A-Z]+ {prefix}{UUID_PATTERN}')
@@ -45,7 +36,7 @@ class EndpointFilter(logging.Filter):
         return True
 
 
-# --- Apply filter + formatter ---
+# --- Apply filter + colored formatter ---
 access_logger = logging.getLogger("uvicorn.access")
 access_logger.addFilter(
     EndpointFilter(
@@ -60,16 +51,11 @@ access_logger.addFilter(
     )
 )
 
-# --- Custom Formatter with Colors ---
-class ColorFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        color = COLORS.get(record.levelname, "")
-        reset = COLORS["RESET"]
-        return f"[{time_str}] {color}{record.levelname}{reset}: {record.getMessage()}"
-
+# Use Uvicorn's DefaultFormatter (keeps colors)
 for handler in access_logger.handlers:
-    handler.setFormatter(ColorFormatter())
+    handler.setFormatter(
+        DefaultFormatter(fmt="[%(asctime)s] %(levelprefix)s %(message)s", use_colors=True)
+    )
 
 
 @app.get("/health")
