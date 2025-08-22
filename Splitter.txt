@@ -1,90 +1,31 @@
-import sqlite3
-import pandas as pd
+# Place these at the top with other imports
+import asyncio
+from datetime import datetime, timedelta
 
-# Method 1: Basic sqlite3 connection
-def read_sqlite_basic(db_path):
-    # Connect to the database
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # List all tables
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = cursor.fetchall()
-    print("Tables in database:", [table[0] for table in tables])
-    
-    # Read data from a specific table
-    table_name = "your_table_name"  # Replace with actual table name
-    cursor.execute(f"SELECT * FROM {table_name}")
-    rows = cursor.fetchall()
-    
-    # Get column names
-    column_names = [description[0] for description in cursor.description]
-    print("Columns:", column_names)
-    
-    # Close connection
-    conn.close()
-    
-    return rows, column_names
+# Create a simple in-memory dictionary to store active users and their last activity time.
+# Keys will be the user ID, values will be the timestamp.
+active_users = {}
+# Active users are considered active if they've checked in within the last 30 seconds
+ACTIVE_TIMEOUT_SECONDS = 30
 
-# Method 2: Using pandas (recommended for data analysis)
-def read_sqlite_pandas(db_path):
-    # Connect to database
-    conn = sqlite3.connect(db_path)
-    
-    # Get list of tables
-    tables_query = "SELECT name FROM sqlite_master WHERE type='table';"
-    tables_df = pd.read_sql_query(tables_query, conn)
-    print("Available tables:")
-    print(tables_df)
-    
-    # Read a specific table into DataFrame
-    table_name = "your_table_name"  # Replace with actual table name
-    df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-    
-    # Close connection
-    conn.close()
-    
-    return df
+@app.post("/user_checkin/{user_id}")
+async def user_checkin(user_id: str):
+    """
+    Endpoint for a user to signal they are active.
+    """
+    active_users[user_id] = datetime.now()
+    return {"message": "Checked in successfully"}
 
-# Method 3: Read all tables
-def read_all_tables(db_path):
-    conn = sqlite3.connect(db_path)
-    
-    # Get all table names
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = [table[0] for table in cursor.fetchall()]
-    
-    # Read each table into a dictionary of DataFrames
-    all_tables = {}
-    for table in tables:
-        all_tables[table] = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-        print(f"Table '{table}' has {len(all_tables[table])} rows")
-    
-    conn.close()
-    return all_tables
-
-# Example usage
-if __name__ == "__main__":
-    db_file = "example.db"  # Replace with your .db file path
-    
-    try:
-        # Method 1: Basic reading
-        print("=== Basic SQLite Reading ===")
-        rows, columns = read_sqlite_basic(db_file)
-        
-        # Method 2: Using pandas
-        print("\n=== Using Pandas ===")
-        df = read_sqlite_pandas(db_file)
-        print(df.head())
-        
-        # Method 3: Read all tables
-        print("\n=== All Tables ===")
-        all_data = read_all_tables(db_file)
-        
-    except sqlite3.Error as e:
-        print(f"SQLite error: {e}")
-    except FileNotFoundError:
-        print(f"Database file '{db_file}' not found")
-    except Exception as e:
-        print(f"Error: {e}")
+@app.get("/active_users")
+async def get_active_users():
+    """
+    Endpoint to get the count of currently active users.
+    """
+    # Clean up old users. A user is considered inactive if their last check-in was > ACTIVE_TIMEOUT_SECONDS ago.
+    now = datetime.now()
+    users_to_remove = [user_id for user_id, last_seen in active_users.items() if (now - last_seen).total_seconds() > ACTIVE_TIMEOUT_SECONDS]
+    for user_id in users_to_remove:
+        if user_id in active_users: # Check again to prevent KeyError
+            del active_users[user_id]
+            
+    return {"count": len(active_users)}
