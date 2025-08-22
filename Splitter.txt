@@ -1,25 +1,58 @@
-{
-  "version": 1,
-  "disable_existing_loggers": false,
-  "formatters": {
-    "default": {
-      "()": "uvicorn.logging.DefaultFormatter",
-      "fmt": "[%(levelname)s] [%(asctime)s] %(message)s",
-      "datefmt": "%Y-%m-%d %H:%M:%S"
-    }
-  },
-  "handlers": {
-    "default": {
-      "formatter": "default",
-      "class": "logging.StreamHandler",
-      "stream": "ext://sys.stderr"
-    }
-  },
-  "loggers": {
-    "uvicorn.error": {
-      "handlers": ["default"],
-      "level": "INFO",
-      "propagate": false
-    }
-  }
-}
+import logging
+from typing import List
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+# ... other imports
+
+# 1. Create a custom logging filter to exclude specific endpoints
+class EndpointFilter(logging.Filter):
+    def __init__(self, endpoints_to_exclude: List[str], name=""):
+        super().__init__(name)
+        self.endpoints_to_exclude = endpoints_to_exclude
+
+    def filter(self, record):
+        # We check if the request path contains any of our excluded endpoints
+        try:
+            # The request path is usually in the message args
+            request_path = record.args[2].split(" ")[1] # e.g., "GET /my-path HTTP/1.1" -> "/my-path"
+            for endpoint in self.endpoints_to_exclude:
+                if request_path.startswith(endpoint):
+                    return False
+            return True
+        except (IndexError, AttributeError):
+            # Fallback for unexpected log formats
+            return True
+
+# Create FastAPI app instance
+app = FastAPI()
+
+# 2. Get the uvicorn.access logger and apply the filter
+access_logger = logging.getLogger("uvicorn.access")
+
+# Clear existing handlers to prevent log duplication, and add a custom one
+# This ensures that the custom filter is applied correctly.
+access_logger.handlers.clear()
+access_logger.propagate = False
+access_handler = logging.StreamHandler()
+
+# Define the list of endpoints you want to filter out
+endpoints_to_filter = ["/user_checkin", "/active_users"]
+access_handler.addFilter(EndpointFilter(endpoints_to_filter))
+
+# Now, set the format for this handler, including the timestamp
+formatter = logging.Formatter(
+    fmt='%(levelprefix)s %(asctime)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+access_handler.setFormatter(formatter)
+access_logger.addHandler(access_handler)
+
+# 3. Add CORS middleware (your existing code)
+# You should still place this right after app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
