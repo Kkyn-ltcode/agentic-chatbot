@@ -1,71 +1,10 @@
-import logging
 import re
-from datetime import datetime
-from fastapi import FastAPI
-from uvicorn.logging import DefaultFormatter  # <-- Uvicorn's color formatter
 
-app = FastAPI()
-
-# --- UUID regex ---
-UUID_PATTERN = (
-    r"[0-9a-fA-F]{8}-"
-    r"[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{12}"
-)
-
-class EndpointFilter(logging.Filter):
-    def __init__(self, prefixes: list[str], extra_block: list[str] = None):
-        super().__init__()
-        self.blocked_patterns = []
-        
-        for prefix in prefixes:
-            self.blocked_patterns.append(
-                re.compile(fr'\"[A-Z]+ {prefix}{UUID_PATTERN}')
-            )
-        
-        if extra_block:
-            self.blocked_patterns += [re.compile(p) for p in extra_block]
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        for pattern in self.blocked_patterns:
-            if pattern.search(msg):
-                return False
-        return True
-
-
-# --- Apply filter + colored formatter ---
-access_logger = logging.getLogger("uvicorn.access")
-access_logger.addFilter(
-    EndpointFilter(
-        prefixes=[
-            r"/conversation/",
-            r"/chat/",
-        ],
-        extra_block=[
-            r'GET /health',
-            r'GET /favicon.ico'
-        ]
-    )
-)
-
-# Use Uvicorn's DefaultFormatter (keeps colors)
-for handler in access_logger.handlers:
-    handler.setFormatter(
-        DefaultFormatter(fmt="[%(asctime)s] %(levelprefix)s %(message)s", use_colors=True)
-    )
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-@app.get("/conversation/{conv_id}")
-async def conversation(conv_id: str):
-    return {"conversation": conv_id}
-
-@app.post("/chat/{chat_id}")
-async def chat(chat_id: str):
-    return {"chat": chat_id}
+def html_to_markdown(text: str) -> str:
+    # Replace <br> with line breaks
+    text = re.sub(r"<br\s*/?>", "\n", text)
+    # Replace <ul> and </ul> with nothing
+    text = re.sub(r"</?ul>", "", text)
+    # Replace <li> with markdown bullet points
+    text = re.sub(r"<li>(.*?)</li>", r"- \1\n", text)
+    return text
