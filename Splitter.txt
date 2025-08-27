@@ -1,19 +1,31 @@
 import requests
+import json
 
-# Example: POST request with JSON data
-url = "https://api.example.com/v1/chat/completions"
+url = "https://api.openai.com/v1/chat/completions"
 headers = {
     "Authorization": "Bearer YOUR_API_KEY",
     "Content-Type": "application/json"
 }
 payload = {
     "model": "gpt-4.1-mini",
-    "messages": [
-        {"role": "user", "content": "Hello from Python instead of curl!"}
-    ]
+    "messages": [{"role": "user", "content": "Hello, stream me text"}],
+    "stream": True
 }
 
-response = requests.post(url, headers=headers, json=payload)
-
-# Print response JSON
-print(response.json())
+# Stream response
+with requests.post(url, headers=headers, json=payload, stream=True) as r:
+    for line in r.iter_lines():
+        if line:
+            # OpenAI sends lines like: b'data: {...}'
+            decoded_line = line.decode("utf-8")
+            if decoded_line.startswith("data: "):
+                data = decoded_line[len("data: "):]
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                    delta = event["choices"][0]["delta"].get("content")
+                    if delta:
+                        print(delta, end="", flush=True)
+                except json.JSONDecodeError:
+                    pass
