@@ -19,30 +19,15 @@ const scrollToBottom = useCallback((force = false) => {
         }
       });
     } else {
-      // Slower smooth scroll during streaming to reduce jumpiness
-      const targetScrollTop = chatDisplay.scrollHeight;
-      const currentScrollTop = chatDisplay.scrollTop;
-      const distance = targetScrollTop - currentScrollTop;
-      
-      if (distance > 10) { // Only animate if there's significant distance
-        const startTime = performance.now();
-        const duration = 300; // 300ms for slower scroll
-        
-        const animateScroll = (currentTime) => {
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-          const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease-out cubic for smoother feel
-          
-          const newScrollTop = currentScrollTop + (distance * easeProgress);
-          chatDisplay.scrollTop = newScrollTop;
-          
-          if (progress < 1) {
-            requestAnimationFrame(animateScroll);
-          }
-        };
-        
-        requestAnimationFrame(animateScroll);
-      }
+      // Simple smooth scroll during streaming - less jumpy
+      requestAnimationFrame(() => {
+        if (chatDisplayRef.current) {
+          chatDisplayRef.current.scrollTo({
+            top: chatDisplayRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
+      });
     }
   }
 }, []);
