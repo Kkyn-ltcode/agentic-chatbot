@@ -1,47 +1,65 @@
-// Simple, stable scrolling without jumpiness
-const scrollToBottom = useCallback(() => {
+// Simple version without throttling - replace your existing scroll useEffect with this:
+
+const forceScrollToBottomRef = useRef(false);
+
+const scrollToBottom = useCallback((force = false) => {
   if (!chatDisplayRef.current) return;
   
   const chatDisplay = chatDisplayRef.current;
-  const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
+  const scrollableHeight = chatDisplay.scrollHeight - chatDisplay.clientHeight;
+  const scrollPercentage = scrollableHeight > 0 ? (chatDisplay.scrollTop / scrollableHeight) * 100 : 100;
+  const isNearBottom = scrollPercentage >= 90; // User is within 90% of the bottom
   
-  if (isNearBottom) {
-    // Simple direct assignment - no requestAnimationFrame which can cause timing issues
-    chatDisplay.scrollTop = chatDisplay.scrollHeight;
-  }
-}, []);
-
-// Debounced version to handle rapid updates during streaming
-const scrollTimeoutRef = useRef(null);
-const debouncedScroll = useCallback(() => {
-  if (scrollTimeoutRef.current) {
-    clearTimeout(scrollTimeoutRef.current);
-  }
-  
-  scrollTimeoutRef.current = setTimeout(() => {
-    scrollToBottom();
-  }, 16); // ~60fps for smooth updates
-}, [scrollToBottom]);
-
-useEffect(() => {
-  debouncedScroll();
-}, [messages, debouncedScroll]);
-
-// For immediate scrolling (new messages, page loads)
-const scrollToBottomImmediately = () => {
-  if (chatDisplayRef.current) {
-    chatDisplayRef.current.scrollTop = chatDisplayRef.current.scrollHeight;
-  }
-};
-
-// Cleanup
-useEffect(() => {
-  return () => {
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
+  if (force || isNearBottom) {
+    if (force) {
+      // Immediate scroll for new messages/page loads
+      requestAnimationFrame(() => {
+        if (chatDisplayRef.current) {
+          chatDisplayRef.current.scrollTop = chatDisplayRef.current.scrollHeight;
+        }
+      });
+    } else {
+      // Slower smooth scroll during streaming to reduce jumpiness
+      const targetScrollTop = chatDisplay.scrollHeight;
+      const currentScrollTop = chatDisplay.scrollTop;
+      const distance = targetScrollTop - currentScrollTop;
+      
+      if (distance > 10) { // Only animate if there's significant distance
+        const startTime = performance.now();
+        const duration = 300; // 300ms for slower scroll
+        
+        const animateScroll = (currentTime) => {
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease-out cubic for smoother feel
+          
+          const newScrollTop = currentScrollTop + (distance * easeProgress);
+          chatDisplay.scrollTop = newScrollTop;
+          
+          if (progress < 1) {
+            requestAnimationFrame(animateScroll);
+          }
+        };
+        
+        requestAnimationFrame(animateScroll);
+      }
     }
-  };
+  }
 }, []);
+
+useEffect(() => {
+  if (forceScrollToBottomRef.current) {
+    scrollToBottom(true);
+    forceScrollToBottomRef.current = false;
+  } else {
+    scrollToBottom();
+  }
+}, [messages, scrollToBottom]);
+
+// Function to trigger immediate scrolling
+const scrollToBottomImmediately = () => {
+  forceScrollToBottomRef.current = true;
+};
 
 // Add scrollToBottomImmediately() calls to these locations in your existing code:
 
