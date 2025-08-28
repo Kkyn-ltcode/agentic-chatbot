@@ -1,62 +1,19 @@
-// Simple version without throttling - replace your existing scroll useEffect with this:
+// Add this list of greetings
+const greetings = [
+  'Hi there!',
+  'Hello again!',
+  'Welcome back!',
+  'How can I help?',
+  "What's on your mind?"
+];
 
-const forceScrollToBottomRef = useRef(false);
+// Use useState to manage the current greeting
+const [currentGreeting, setCurrentGreeting] = useState('');
 
-const scrollToBottom = useCallback((force = false) => {
-  if (!chatDisplayRef.current) return;
-  
-  const chatDisplay = chatDisplayRef.current;
-  const scrollableHeight = chatDisplay.scrollHeight - chatDisplay.clientHeight;
-  const scrollPercentage = scrollableHeight > 0 ? (chatDisplay.scrollTop / scrollableHeight) * 100 : 100;
-  const isNearBottom = scrollPercentage >= 90; // User is within 90% of the bottom
-  
-  if (force || isNearBottom) {
-    if (force) {
-      // Immediate scroll for new messages/page loads
-      requestAnimationFrame(() => {
-        if (chatDisplayRef.current) {
-          chatDisplayRef.current.scrollTop = chatDisplayRef.current.scrollHeight;
-        }
-      });
-    } else {
-      // Simple smooth scroll during streaming - less jumpy
-      requestAnimationFrame(() => {
-        if (chatDisplayRef.current) {
-          chatDisplayRef.current.scrollTo({
-            top: chatDisplayRef.current.scrollHeight,
-            behavior: 'smooth'
-          });
-        }
-      });
-    }
-  }
-}, []);
-
+// Use useEffect to set a random greeting when the component loads
 useEffect(() => {
-  if (forceScrollToBottomRef.current) {
-    scrollToBottom(true);
-    forceScrollToBottomRef.current = false;
-  } else {
-    scrollToBottom();
-  }
-}, [messages, scrollToBottom]);
+  const randomIndex = Math.floor(Math.random() * greetings.length);
+  setCurrentGreeting(greetings[randomIndex]);
+}, []); // The empty array [] ensures this runs only once
 
-// Function to trigger immediate scrolling
-const scrollToBottomImmediately = () => {
-  forceScrollToBottomRef.current = true;
-};
-
-// Add scrollToBottomImmediately() calls to these locations in your existing code:
-
-// 1. In handleSendMessage after adding user message:
-// const updatedMessages = [...messages, userMessage];
-// setMessages(updatedMessages);
-// scrollToBottomImmediately(); // Add this line
-
-// 2. In loadConversation after setting messages:
-// setMessages(loadedMessages);
-// scrollToBottomImmediately(); // Add this line
-
-// 3. In handleNewChat after clearing messages:
-// setMessages([]);
-// scrollToBottomImmediately(); // Add this line
+// Now, wherever you had "Hello", replace it with {currentGreeting}
