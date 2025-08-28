@@ -1,128 +1,60 @@
-// Replace your existing useEffect for auto-scrolling with this improved version:
+// Simple version without throttling - replace your existing scroll useEffect with this:
 
-useEffect(() => {
-  if (!chatDisplayRef.current) return;
-  
-  const chatDisplay = chatDisplayRef.current;
-  const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
-  
-  // Only auto-scroll if user is near the bottom (within 100px)
-  if (isNearBottom) {
-    // Use requestAnimationFrame for smooth scrolling
-    requestAnimationFrame(() => {
-      if (chatDisplayRef.current) {
-        chatDisplayRef.current.scrollTo({
-          top: chatDisplayRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
-      }
-    });
-  }
-}, [messages]); // Only depend on messages, not inputText
-
-// Optional: Add a throttled version for even smoother performance during rapid updates
-import { useCallback, useRef } from 'react';
-
-// Add this to your component (after your other state declarations):
-const scrollTimeoutRef = useRef(null);
-
-const smoothScrollToBottom = useCallback(() => {
-  if (!chatDisplayRef.current) return;
-  
-  const chatDisplay = chatDisplayRef.current;
-  const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
-  
-  if (isNearBottom) {
-    // Clear any pending scroll timeout
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-    
-    // Throttle the scroll updates to every 100ms during streaming
-    scrollTimeoutRef.current = setTimeout(() => {
-      if (chatDisplayRef.current) {
-        chatDisplayRef.current.scrollTo({
-          top: chatDisplayRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
-      }
-    }, 100);
-  }
-}, []);
-
-// Replace the useEffect with this throttled version:
-useEffect(() => {
-  smoothScrollToBottom();
-}, [messages, smoothScrollToBottom]);
-
-// Clean up timeout on unmount:
-useEffect(() => {
-  return () => {
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-  };
-}, []);
-
-// Hybrid approach: Immediate scroll for new messages, throttled for streaming
 const forceScrollToBottomRef = useRef(false);
 
-const smoothScrollToBottom = useCallback((force = false) => {
+const scrollToBottom = useCallback((force = false) => {
   if (!chatDisplayRef.current) return;
   
   const chatDisplay = chatDisplayRef.current;
   const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
   
   if (force || isNearBottom) {
-    const lastMessage = messages[messages.length - 1];
-    const isStreaming = isLoading && lastMessage?.sender === 'bot';
-    
-    if (force || !isStreaming) {
-      // Immediate scroll for new messages, page load, or forced scroll
+    if (force) {
+      // Immediate scroll for new messages/page loads
       requestAnimationFrame(() => {
         if (chatDisplayRef.current) {
           chatDisplayRef.current.scrollTop = chatDisplayRef.current.scrollHeight;
         }
       });
     } else {
-      // Throttled smooth scroll during streaming
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current);
-      }
-      scrollTimeoutRef.current = setTimeout(() => {
+      // Smooth scroll during streaming
+      requestAnimationFrame(() => {
         if (chatDisplayRef.current) {
           chatDisplayRef.current.scrollTo({
             top: chatDisplayRef.current.scrollHeight,
             behavior: 'smooth'
           });
         }
-      }, 50); // Faster throttling for more responsive streaming
+      });
     }
   }
-}, [messages, isLoading]);
+}, []);
 
 useEffect(() => {
   if (forceScrollToBottomRef.current) {
-    smoothScrollToBottom(true);
+    scrollToBottom(true);
     forceScrollToBottomRef.current = false;
   } else {
-    smoothScrollToBottom();
+    scrollToBottom();
   }
-}, [messages, smoothScrollToBottom]);
+}, [messages, scrollToBottom]);
 
-// Add these functions to trigger immediate scrolling:
+// Function to trigger immediate scrolling
 const scrollToBottomImmediately = () => {
   forceScrollToBottomRef.current = true;
 };
 
-// Call this in your handleSendMessage function after adding user message:
-// Add this line after: setMessages(updatedMessages);
-// scrollToBottomImmediately();
+// Add scrollToBottomImmediately() calls to these locations in your existing code:
 
-// Call this in your loadConversation function after setting messages:
-// Add this line after: setMessages(loadedMessages);
-// scrollToBottomImmediately();
+// 1. In handleSendMessage after adding user message:
+// const updatedMessages = [...messages, userMessage];
+// setMessages(updatedMessages);
+// scrollToBottomImmediately(); // Add this line
 
-// Call this in your handleNewChat function:
-// Add this line after: setMessages([]);
-// scrollToBottomImmediately();
+// 2. In loadConversation after setting messages:
+// setMessages(loadedMessages);
+// scrollToBottomImmediately(); // Add this line
+
+// 3. In handleNewChat after clearing messages:
+// setMessages([]);
+// scrollToBottomImmediately(); // Add this line
