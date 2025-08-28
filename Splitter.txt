@@ -1,19 +1,28 @@
--useEffect(() => {
--  if (!chatDisplayRef.current) return;
--  chatDisplayRef.current.scrollTo({
--    top: chatDisplayRef.current.scrollHeight,
--    behavior: "smooth"
--  });
--}, [messages]);
-useEffect(() => {
-  const el = chatDisplayRef.current;
-  if (!el) return;
-  if (!isAtBottomRef.current) return; // don’t scroll if user scrolled up
+   const chatDisplayRef = useRef(null);
+-  const isAtBottomRef = useRef(true);
+-  const [isAtBottom, setIsAtBottom] = useState(true);
+-
+-  const handleScroll = () => {
+-    const el = chatDisplayRef.current;
+-    if (!el) return;
+-    const { scrollTop, scrollHeight, clientHeight } = el;
+-    const atBottom = scrollHeight - scrollTop <= clientHeight + 20; // tolerance
+-    isAtBottomRef.current = atBottom;
+-    setIsAtBottom(atBottom);
+-  };
+  const isAtBottomRef = useRef(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
-  requestAnimationFrame(() => {
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior: "smooth",
-    });
-  });
-}, [messages]);
+  // This flag indicates *we* triggered the scroll (so ignore scroll events while true)
+  const isAutoScrollingRef = useRef(false);
+
+  const handleScroll = useCallback(() => {
+    // Ignore scroll events produced by our own auto-scroll animation
+    if (isAutoScrollingRef.current) return;
+    const el = chatDisplayRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const atBottom = scrollHeight - scrollTop <= clientHeight + 20; // tolerance
+    isAtBottomRef.current = atBottom;
+    setIsAtBottom(atBottom);
+  }, []);
