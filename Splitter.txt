@@ -1,5 +1,10 @@
-<div
-  ref={chatDisplayRef}
-- className={`flex-grow flex flex-col items-center px-4 overflow-y-auto pt-24 scroll-smooth ${messages.length === 0 ? 'justify-center' : ''}`}>
- className={`flex-grow flex flex-col items-center px-4 overflow-y-auto pt-24 scroll-smooth ${messages.length === 0 ? 'justify-center' : ''}`}
- onScroll={handleScroll}>
+-useEffect(() => {
+-  if (chatEndRef.current) {
+-    chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+-  }
+-}, [messages]);
+useEffect(() => {
+  if (isAtBottom && chatEndRef.current) {
+    chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }
+}, [messages, isAtBottom]);
