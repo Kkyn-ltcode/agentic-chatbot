@@ -1,11 +1,5 @@
-  const chatDisplayRef = useRef(null);
-  const chatEndRef = useRef(null);
-
- const [isAtBottom, setIsAtBottom] = useState(true);
-
- const handleScroll = () => {
-   if (!chatDisplayRef.current) return;
-   const { scrollTop, scrollHeight, clientHeight } = chatDisplayRef.current;
-   const atBottom = scrollHeight - scrollTop <= clientHeight + 20; // 20px tolerance
-   setIsAtBottom(atBottom);
- };
+<div
+  ref={chatDisplayRef}
+- className={`flex-grow flex flex-col items-center px-4 overflow-y-auto pt-24 scroll-smooth ${messages.length === 0 ? 'justify-center' : ''}`}>
+ className={`flex-grow flex flex-col items-center px-4 overflow-y-auto pt-24 scroll-smooth ${messages.length === 0 ? 'justify-center' : ''}`}
+ onScroll={handleScroll}>
