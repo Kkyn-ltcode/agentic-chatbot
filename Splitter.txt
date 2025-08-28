@@ -1,31 +1,11 @@
-import requests
-import json
+  const chatDisplayRef = useRef(null);
+  const chatEndRef = useRef(null);
 
-url = "https://api.openai.com/v1/chat/completions"
-headers = {
-    "Authorization": "Bearer YOUR_API_KEY",
-    "Content-Type": "application/json"
-}
-payload = {
-    "model": "gpt-4.1-mini",
-    "messages": [{"role": "user", "content": "Hello, stream me text"}],
-    "stream": True
-}
+ const [isAtBottom, setIsAtBottom] = useState(true);
 
-# Stream response
-with requests.post(url, headers=headers, json=payload, stream=True) as r:
-    for line in r.iter_lines():
-        if line:
-            # OpenAI sends lines like: b'data: {...}'
-            decoded_line = line.decode("utf-8")
-            if decoded_line.startswith("data: "):
-                data = decoded_line[len("data: "):]
-                if data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                    delta = event["choices"][0]["delta"].get("content")
-                    if delta:
-                        print(delta, end="", flush=True)
-                except json.JSONDecodeError:
-                    pass
+ const handleScroll = () => {
+   if (!chatDisplayRef.current) return;
+   const { scrollTop, scrollHeight, clientHeight } = chatDisplayRef.current;
+   const atBottom = scrollHeight - scrollTop <= clientHeight + 20; // 20px tolerance
+   setIsAtBottom(atBottom);
+ };
