@@ -1,52 +1,17 @@
-- useEffect(() => {
--   const el = chatDisplayRef.current;
--   if (!el) return;
--   if (!isAtBottomRef.current) return; // don’t scroll if user scrolled up
--
--   requestAnimationFrame(() => {
--     el.scrollTo({
--       top: el.scrollHeight,
--       behavior: "smooth",
--     });
--   });
-- }, [messages]);
- useLayoutEffect(() => {
-   const el = chatDisplayRef.current;
-   if (!el) return;
-   if (!isAtBottomRef.current) return; // user scrolled up — do not force
-
-   // mark that we're auto-scrolling so handleScroll will ignore onscroll events
-   isAutoScrollingRef.current = true;
-
-   // trigger smooth scroll (browser animates)
-   try {
-     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-   } catch (e) {
-     // fallback
-     el.scrollTop = el.scrollHeight;
-   }
-
-   // poll with rAF until we are at bottom (or timeout) then clear auto-scrolling flag
-   let rafId = null;
-   let checks = 0;
-   const MAX_CHECKS = 60; // ~1s at 60fps; increase if needed
-
-   const check = () => {
-     const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 2;
-     if (atBottom || ++checks > MAX_CHECKS) {
-       isAutoScrollingRef.current = false;
-       // ensure final snap
-       el.scrollTop = el.scrollHeight;
-       // update our "at bottom" trackers
-       handleScroll();
-     } else {
-       rafId = requestAnimationFrame(check);
-     }
-   };
-   rafId = requestAnimationFrame(check);
-
-   return () => {
-     if (rafId) cancelAnimationFrame(rafId);
-     isAutoScrollingRef.current = false;
-   };
- }, [messages, handleScroll]);
+useEffect(() => {
+  if (!chatDisplayRef.current) return;
+  
+  const chatDisplay = chatDisplayRef.current;
+  const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
+  
+  if (isNearBottom) {
+    requestAnimationFrame(() => {
+      if (chatDisplayRef.current) {
+        chatDisplayRef.current.scrollTo({
+          top: chatDisplayRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    });
+  }
+}, [messages]);
