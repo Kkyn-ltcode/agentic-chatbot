@@ -1,17 +1,33 @@
-useEffect(() => {
+const smoothScrollToBottom = useCallback(() => {
   if (!chatDisplayRef.current) return;
   
   const chatDisplay = chatDisplayRef.current;
   const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
   
   if (isNearBottom) {
-    requestAnimationFrame(() => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    
+    scrollTimeoutRef.current = setTimeout(() => {
       if (chatDisplayRef.current) {
         chatDisplayRef.current.scrollTo({
           top: chatDisplayRef.current.scrollHeight,
           behavior: 'smooth'
         });
       }
-    });
+    }, 100);
   }
-}, [messages]);
+}, []);
+
+useEffect(() => {
+  smoothScrollToBottom();
+}, [messages, smoothScrollToBottom]);
+
+useEffect(() => {
+  return () => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+  };
+}, []);
