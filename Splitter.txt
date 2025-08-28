@@ -1,28 +1,52 @@
-   const chatDisplayRef = useRef(null);
--  const isAtBottomRef = useRef(true);
--  const [isAtBottom, setIsAtBottom] = useState(true);
+- useEffect(() => {
+-   const el = chatDisplayRef.current;
+-   if (!el) return;
+-   if (!isAtBottomRef.current) return; // don’t scroll if user scrolled up
 -
--  const handleScroll = () => {
--    const el = chatDisplayRef.current;
--    if (!el) return;
--    const { scrollTop, scrollHeight, clientHeight } = el;
--    const atBottom = scrollHeight - scrollTop <= clientHeight + 20; // tolerance
--    isAtBottomRef.current = atBottom;
--    setIsAtBottom(atBottom);
--  };
-  const isAtBottomRef = useRef(true);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-
-  // This flag indicates *we* triggered the scroll (so ignore scroll events while true)
-  const isAutoScrollingRef = useRef(false);
-
-  const handleScroll = useCallback(() => {
-    // Ignore scroll events produced by our own auto-scroll animation
-    if (isAutoScrollingRef.current) return;
-    const el = chatDisplayRef.current;
-    if (!el) return;
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    const atBottom = scrollHeight - scrollTop <= clientHeight + 20; // tolerance
-    isAtBottomRef.current = atBottom;
-    setIsAtBottom(atBottom);
-  }, []);
+-   requestAnimationFrame(() => {
+-     el.scrollTo({
+-       top: el.scrollHeight,
+-       behavior: "smooth",
+-     });
+-   });
+- }, [messages]);
++ useLayoutEffect(() => {
++   const el = chatDisplayRef.current;
++   if (!el) return;
++   if (!isAtBottomRef.current) return; // user scrolled up — do not force
++
++   // mark that we're auto-scrolling so handleScroll will ignore onscroll events
++   isAutoScrollingRef.current = true;
++
++   // trigger smooth scroll (browser animates)
++   try {
++     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
++   } catch (e) {
++     // fallback
++     el.scrollTop = el.scrollHeight;
++   }
++
++   // poll with rAF until we are at bottom (or timeout) then clear auto-scrolling flag
++   let rafId = null;
++   let checks = 0;
++   const MAX_CHECKS = 60; // ~1s at 60fps; increase if needed
++
++   const check = () => {
++     const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 2;
++     if (atBottom || ++checks > MAX_CHECKS) {
++       isAutoScrollingRef.current = false;
++       // ensure final snap
++       el.scrollTop = el.scrollHeight;
++       // update our "at bottom" trackers
++       handleScroll();
++     } else {
++       rafId = requestAnimationFrame(check);
++     }
++   };
++   rafId = requestAnimationFrame(check);
++
++   return () => {
++     if (rafId) cancelAnimationFrame(rafId);
++     isAutoScrollingRef.current = false;
++   };
++ }, [messages, handleScroll]);
