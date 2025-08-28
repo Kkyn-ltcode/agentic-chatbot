@@ -1,36 +1,47 @@
-// Simple version without throttling - replace your existing scroll useEffect with this:
-
-const forceScrollToBottomRef = useRef(false);
-
-const scrollToBottom = useCallback((force = false) => {
+// Simple, stable scrolling without jumpiness
+const scrollToBottom = useCallback(() => {
   if (!chatDisplayRef.current) return;
   
   const chatDisplay = chatDisplayRef.current;
   const isNearBottom = chatDisplay.scrollHeight - chatDisplay.scrollTop - chatDisplay.clientHeight < 100;
   
-  if (force || isNearBottom) {
-    // Use direct scrollTop assignment for smooth, immediate scrolling
-    requestAnimationFrame(() => {
-      if (chatDisplayRef.current) {
-        chatDisplayRef.current.scrollTop = chatDisplayRef.current.scrollHeight;
-      }
-    });
+  if (isNearBottom) {
+    // Simple direct assignment - no requestAnimationFrame which can cause timing issues
+    chatDisplay.scrollTop = chatDisplay.scrollHeight;
   }
 }, []);
 
-useEffect(() => {
-  if (forceScrollToBottomRef.current) {
-    scrollToBottom(true);
-    forceScrollToBottomRef.current = false;
-  } else {
-    scrollToBottom();
+// Debounced version to handle rapid updates during streaming
+const scrollTimeoutRef = useRef(null);
+const debouncedScroll = useCallback(() => {
+  if (scrollTimeoutRef.current) {
+    clearTimeout(scrollTimeoutRef.current);
   }
-}, [messages, scrollToBottom]);
+  
+  scrollTimeoutRef.current = setTimeout(() => {
+    scrollToBottom();
+  }, 16); // ~60fps for smooth updates
+}, [scrollToBottom]);
 
-// Function to trigger immediate scrolling
+useEffect(() => {
+  debouncedScroll();
+}, [messages, debouncedScroll]);
+
+// For immediate scrolling (new messages, page loads)
 const scrollToBottomImmediately = () => {
-  forceScrollToBottomRef.current = true;
+  if (chatDisplayRef.current) {
+    chatDisplayRef.current.scrollTop = chatDisplayRef.current.scrollHeight;
+  }
 };
+
+// Cleanup
+useEffect(() => {
+  return () => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+  };
+}, []);
 
 // Add scrollToBottomImmediately() calls to these locations in your existing code:
 
