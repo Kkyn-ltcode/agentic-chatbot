@@ -9,30 +9,30 @@ export default function ChatWindow({ messages }) {
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 120,
+    estimateSize: () => 100,
+    overscan: 5,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
 
-  // 👇 Detect if user is near the bottom
+  // 👇 Detect bottom scroll
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
-
-    const threshold = 50; // px from bottom to still count as "at bottom"
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    const threshold = 50;
+    const atBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     setIsAtBottom(atBottom);
   }, []);
 
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return;
-
     el.addEventListener("scroll", handleScroll);
     return () => el.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
 
-  // 👇 Auto-scroll only if user is at bottom
+  // 👇 Auto scroll if at bottom
   useEffect(() => {
     if (messages.length > 0 && isAtBottom) {
       rowVirtualizer.scrollToIndex(messages.length - 1, {
@@ -43,77 +43,94 @@ export default function ChatWindow({ messages }) {
   }, [messages, isAtBottom, rowVirtualizer]);
 
   return (
-    <div
-      ref={parentRef}
-      className="w-full max-w-3xl"
-      style={{
-        height: 600,
-        overflow: "auto",
-      }}
-    >
+    <div className="relative w-full max-w-3xl">
+      {/* Messages list */}
       <div
-        style={{
-          height: rowVirtualizer.getTotalSize(),
-          width: "100%",
-          position: "relative",
-        }}
+        ref={parentRef}
+        style={{ height: 600, overflow: "auto" }}
+        className="border rounded-lg bg-white"
       >
-        {virtualRows.map((virtualRow) => {
-          const message = messages[virtualRow.index];
+        <div
+          style={{
+            height: rowVirtualizer.getTotalSize(),
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {virtualRows.map((virtualRow) => {
+            const message = messages[virtualRow.index];
 
-          return (
-            <div
-              key={message.id}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${virtualRow.start}px)`,
-              }}
-              className={`flex mb-4 items-start group ${
-                message.sender === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              {/* Avatar (bot) */}
-              {message.sender === "bot" && (
-                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center mr-2">
-                  🤖
-                </div>
-              )}
-
-              {/* Message bubble */}
+            return (
               <div
-                className={`relative p-3 rounded-lg max-w-[80%] whitespace-pre-wrap ${
-                  message.sender === "user"
-                    ? "bg-blue-500 text-white"
-                    : "bg-gray-200 text-gray-800"
+                key={message.id}
+                data-index={virtualRow.index} // 👈 needed for measureElement
+                ref={rowVirtualizer.measureElement}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+                className={`flex mb-4 items-start group ${
+                  message.sender === "user" ? "justify-end" : "justify-start"
                 }`}
               >
-                <ReactMarkdown>{message.text}</ReactMarkdown>
-
+                {/* Bot avatar */}
                 {message.sender === "bot" && (
-                  <div className="absolute -bottom-6 left-0 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="text-xs bg-gray-300 px-2 py-1 rounded">
-                      👍
-                    </button>
-                    <button className="text-xs bg-gray-300 px-2 py-1 rounded">
-                      👎
-                    </button>
+                  <div className="flex-shrink-0 h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center mr-2">
+                    🤖
+                  </div>
+                )}
+
+                {/* Bubble */}
+                <div
+                  className={`relative p-3 rounded-lg max-w-[80%] whitespace-pre-wrap ${
+                    message.sender === "user"
+                      ? "bg-blue-500 text-white"
+                      : "bg-gray-200 text-gray-800"
+                  }`}
+                >
+                  <ReactMarkdown>{message.text}</ReactMarkdown>
+
+                  {message.sender === "bot" && (
+                    <div className="absolute -bottom-6 left-0 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button className="text-xs bg-gray-300 px-2 py-1 rounded">
+                        👍
+                      </button>
+                      <button className="text-xs bg-gray-300 px-2 py-1 rounded">
+                        👎
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* User avatar */}
+                {message.sender === "user" && (
+                  <div className="flex-shrink-0 h-8 w-8 rounded-full bg-blue-500 text-white flex items-center justify-center ml-2">
+                    😊
                   </div>
                 )}
               </div>
-
-              {/* Avatar (user) */}
-              {message.sender === "user" && (
-                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-blue-500 text-white flex items-center justify-center ml-2">
-                  😊
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+
+      {/* 👇 Floating "Scroll to latest" button */}
+      {!isAtBottom && (
+        <button
+          onClick={() =>
+            rowVirtualizer.scrollToIndex(messages.length - 1, {
+              align: "end",
+              behavior: "smooth",
+            })
+          }
+          className="absolute bottom-4 right-4 bg-blue-500 text-white px-3 py-2 rounded-full shadow-md hover:bg-blue-600 transition"
+        >
+          ↓ New messages
+        </button>
+      )}
     </div>
   );
 }
