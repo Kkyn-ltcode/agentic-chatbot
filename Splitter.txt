@@ -1,19 +1,119 @@
-// Add this list of greetings
-const greetings = [
-  'Hi there!',
-  'Hello again!',
-  'Welcome back!',
-  'How can I help?',
-  "What's on your mind?"
-];
+import { useRef, useEffect, useState, useCallback } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import ReactMarkdown from "react-markdown";
 
-// Use useState to manage the current greeting
-const [currentGreeting, setCurrentGreeting] = useState('');
+export default function ChatWindow({ messages }) {
+  const parentRef = useRef();
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
-// Use useEffect to set a random greeting when the component loads
-useEffect(() => {
-  const randomIndex = Math.floor(Math.random() * greetings.length);
-  setCurrentGreeting(greetings[randomIndex]);
-}, []); // The empty array [] ensures this runs only once
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 120,
+  });
 
-// Now, wherever you had "Hello", replace it with {currentGreeting}
+  const virtualRows = rowVirtualizer.getVirtualItems();
+
+  // 👇 Detect if user is near the bottom
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+
+    const threshold = 50; // px from bottom to still count as "at bottom"
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setIsAtBottom(atBottom);
+  }, []);
+
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+
+    el.addEventListener("scroll", handleScroll);
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, [handleScroll]);
+
+  // 👇 Auto-scroll only if user is at bottom
+  useEffect(() => {
+    if (messages.length > 0 && isAtBottom) {
+      rowVirtualizer.scrollToIndex(messages.length - 1, {
+        align: "end",
+        behavior: "smooth",
+      });
+    }
+  }, [messages, isAtBottom, rowVirtualizer]);
+
+  return (
+    <div
+      ref={parentRef}
+      className="w-full max-w-3xl"
+      style={{
+        height: 600,
+        overflow: "auto",
+      }}
+    >
+      <div
+        style={{
+          height: rowVirtualizer.getTotalSize(),
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {virtualRows.map((virtualRow) => {
+          const message = messages[virtualRow.index];
+
+          return (
+            <div
+              key={message.id}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+              className={`flex mb-4 items-start group ${
+                message.sender === "user" ? "justify-end" : "justify-start"
+              }`}
+            >
+              {/* Avatar (bot) */}
+              {message.sender === "bot" && (
+                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center mr-2">
+                  🤖
+                </div>
+              )}
+
+              {/* Message bubble */}
+              <div
+                className={`relative p-3 rounded-lg max-w-[80%] whitespace-pre-wrap ${
+                  message.sender === "user"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-200 text-gray-800"
+                }`}
+              >
+                <ReactMarkdown>{message.text}</ReactMarkdown>
+
+                {message.sender === "bot" && (
+                  <div className="absolute -bottom-6 left-0 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button className="text-xs bg-gray-300 px-2 py-1 rounded">
+                      👍
+                    </button>
+                    <button className="text-xs bg-gray-300 px-2 py-1 rounded">
+                      👎
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Avatar (user) */}
+              {message.sender === "user" && (
+                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-blue-500 text-white flex items-center justify-center ml-2">
+                  😊
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
