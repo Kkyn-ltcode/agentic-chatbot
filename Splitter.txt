@@ -9,7 +9,7 @@ export default function ChatWindow({ messages }) {
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 100,
+    estimateSize: () => 100, // fallback, real size measured via ref
     overscan: 5,
   });
 
@@ -19,7 +19,7 @@ export default function ChatWindow({ messages }) {
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
-    const threshold = 50;
+    const threshold = 50; // px tolerance from bottom
     const atBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     setIsAtBottom(atBottom);
@@ -32,15 +32,23 @@ export default function ChatWindow({ messages }) {
     return () => el.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
 
-  // 👇 Auto scroll if at bottom
+  // 👇 Auto scroll instantly when new messages come in
   useEffect(() => {
     if (messages.length > 0 && isAtBottom) {
       rowVirtualizer.scrollToIndex(messages.length - 1, {
         align: "end",
-        behavior: "smooth",
+        behavior: "auto", // instant + reliable with dynamic size
       });
     }
   }, [messages, isAtBottom, rowVirtualizer]);
+
+  // 👇 Smooth scroll handler for button click
+  const scrollToBottomSmooth = () => {
+    const el = parentRef.current;
+    if (!el) return;
+    const target = el.scrollHeight - el.clientHeight;
+    el.scrollTo({ top: target, behavior: "smooth" });
+  };
 
   return (
     <div className="relative w-full max-w-3xl">
@@ -63,7 +71,7 @@ export default function ChatWindow({ messages }) {
             return (
               <div
                 key={message.id}
-                data-index={virtualRow.index} // 👈 needed for measureElement
+                data-index={virtualRow.index}
                 ref={rowVirtualizer.measureElement}
                 style={{
                   position: "absolute",
@@ -120,12 +128,7 @@ export default function ChatWindow({ messages }) {
       {/* 👇 Floating "Scroll to latest" button */}
       {!isAtBottom && (
         <button
-          onClick={() =>
-            rowVirtualizer.scrollToIndex(messages.length - 1, {
-              align: "end",
-              behavior: "smooth",
-            })
-          }
+          onClick={scrollToBottomSmooth}
           className="absolute bottom-4 right-4 bg-blue-500 text-white px-3 py-2 rounded-full shadow-md hover:bg-blue-600 transition"
         >
           ↓ New messages
