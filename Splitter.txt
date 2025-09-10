@@ -1,53 +1,18 @@
-const App = () => {
-  // ... your existing state and refs
-
-  // State to track if the window is scrolling
-  const [isScrolling, setIsScrolling] = useState(false);
-  // Ref for the timeout to turn off isScrolling
-  const scrollTimeout = useRef(null);
-
-  const handleWindowScroll = () => {
-    setIsScrolling(true);
-    // Clear any existing timeout
-    if (scrollTimeout.current) {
-      clearTimeout(scrollTimeout.current);
-    }
-    // Set a new timeout to turn off isScrolling after a short delay
-    scrollTimeout.current = setTimeout(() => {
-      setIsScrolling(false);
-    }, 150); // Adjust delay as needed
-  };
-
-  useEffect(() => {
-    window.addEventListener('scroll', handleWindowScroll);
-    return () => {
-      window.removeEventListener('scroll', handleWindowScroll);
-    };
-  }, []);
-
-  return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
-      {/* The rest of your app UI */}
-      
-      {/* This container will now be scrollable */}
-      <div className="flex-1 w-full max-w-4xl p-4">
-        <AutoSizer>
-          {({ width }) => (
-            <List
-              ref={listRef}
-              width={width}
-              height={window.innerHeight} // Set height to window height
-              rowCount={messages.length}
-              rowHeight={cache.current.rowHeight}
-              rowRenderer={rowRenderer}
-              overscanRowCount={10}
-              isScrolling={isScrolling}
-              scrollToIndex={messages.length - 1}
-            />
-          )}
-        </AutoSizer>
-      </div>
-      {/* ... the rest of your UI */}
-    </div>
-  );
-};
+<WindowScroller>
+  {({ height, isScrolling, onChildScroll, scrollTop }) => (
+    <List
+      autoHeight={true} // This is key for List to grow with content
+      ref={listRef}
+      width={1000} // Set a fixed or responsive width
+      height={height} // WindowScroller provides the height of the window
+      rowCount={messages.length}
+      rowHeight={cache.current.rowHeight}
+      rowRenderer={rowRenderer}
+      isScrolling={isScrolling}
+      onScroll={onChildScroll}
+      scrollTop={scrollTop}
+      overscanRowCount={10}
+      scrollToIndex={messages.length - 1}
+    />
+  )}
+</WindowScroller>
