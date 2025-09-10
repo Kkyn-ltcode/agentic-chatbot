@@ -1,65 +1,53 @@
-import { List, CellMeasurer, CellMeasurerCache } from 'react-virtualized';
-const cache = new CellMeasurerCache({
-  defaultHeight: 120, // A good initial guess for the height
-  fixedWidth: true,
-});
+const App = () => {
+  // ... your existing state and refs
 
-// The Row Renderer function now takes an additional parameter
-const rowRenderer = ({ key, index, parent, style }) => {
-  const message = messages[index];
-  const isUserMessage = message.role === 'user';
+  // State to track if the window is scrolling
+  const [isScrolling, setIsScrolling] = useState(false);
+  // Ref for the timeout to turn off isScrolling
+  const scrollTimeout = useRef(null);
+
+  const handleWindowScroll = () => {
+    setIsScrolling(true);
+    // Clear any existing timeout
+    if (scrollTimeout.current) {
+      clearTimeout(scrollTimeout.current);
+    }
+    // Set a new timeout to turn off isScrolling after a short delay
+    scrollTimeout.current = setTimeout(() => {
+      setIsScrolling(false);
+    }, 150); // Adjust delay as needed
+  };
+
+  useEffect(() => {
+    window.addEventListener('scroll', handleWindowScroll);
+    return () => {
+      window.removeEventListener('scroll', handleWindowScroll);
+    };
+  }, []);
 
   return (
-    <CellMeasurer
-      key={key}
-      cache={cache}
-      parent={parent}
-      columnIndex={0}
-      rowIndex={index}
-    >
-      {({ measure, registerChild }) => (
-        <div
-          ref={registerChild}
-          style={style}
-          className={classNames(
-            'p-3 my-2 rounded-lg max-w-lg shadow-md',
-            isUserMessage ? 'bg-blue-600 text-white ml-auto' : 'bg-gray-200 text-gray-800 mr-auto'
+    <div className="min-h-screen bg-gray-100 flex flex-col items-center p-4">
+      {/* The rest of your app UI */}
+      
+      {/* This container will now be scrollable */}
+      <div className="flex-1 w-full max-w-4xl p-4">
+        <AutoSizer>
+          {({ width }) => (
+            <List
+              ref={listRef}
+              width={width}
+              height={window.innerHeight} // Set height to window height
+              rowCount={messages.length}
+              rowHeight={cache.current.rowHeight}
+              rowRenderer={rowRenderer}
+              overscanRowCount={10}
+              isScrolling={isScrolling}
+              scrollToIndex={messages.length - 1}
+            />
           )}
-        >
-          {/* Your message content */}
-          <div className="flex justify-between items-start">
-            <div className="font-semibold text-sm">
-              {isUserMessage ? 'You' : 'Bot'}
-            </div>
-            <div className="flex-none text-xs text-gray-400">
-              {message.timestamp}
-            </div>
-          </div>
-          <div className="text-sm mt-1">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-200 underline hover:no-underline" />,
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
-          </div>
-          {/* ... rest of your message component logic */}
-        </div>
-      )}
-    </CellMeasurer>
+        </AutoSizer>
+      </div>
+      {/* ... the rest of your UI */}
+    </div>
   );
 };
-
-// In your main return block
-<List
-  ref={listRef}
-  width={1000}
-  height={500}
-  rowCount={messages.length}
-  rowHeight={cache.rowHeight} // The key change here!
-  rowRenderer={rowRenderer}
-  overscanRowCount={10}
-  scrollToIndex={messages.length - 1}
-/>
