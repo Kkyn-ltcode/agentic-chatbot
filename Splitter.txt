@@ -1,18 +1,41 @@
-<WindowScroller>
-  {({ height, isScrolling, onChildScroll, scrollTop }) => (
-    <List
-      autoHeight={true} // This is key for List to grow with content
-      ref={listRef}
-      width={1000} // Set a fixed or responsive width
-      height={height} // WindowScroller provides the height of the window
-      rowCount={messages.length}
-      rowHeight={cache.current.rowHeight}
-      rowRenderer={rowRenderer}
-      isScrolling={isScrolling}
-      onScroll={onChildScroll}
-      scrollTop={scrollTop}
-      overscanRowCount={10}
-      scrollToIndex={messages.length - 1}
-    />
-  )}
-</WindowScroller>
+import fitz  # PyMuPDF
+import pdfplumber
+from pdf2image import convert_from_path
+import pytesseract
+
+def read_pdf_with_tables(path):
+    all_text = []
+
+    # First, open with PyMuPDF for text
+    doc = fitz.open(path)
+
+    # Open again with pdfplumber for tables
+    with pdfplumber.open(path) as plumber_pdf:
+        for i, page in enumerate(doc):
+            text = page.get_text().strip()
+            page_text = f"--- Page {i+1} ---\n"
+
+            # If no text, fallback to OCR
+            if not text:
+                print(f"OCR on page {i+1}")
+                images = convert_from_path(path, first_page=i+1, last_page=i+1)
+                text = pytesseract.image_to_string(images[0], lang="eng")
+
+            page_text += text + "\n"
+
+            # Extract tables with pdfplumber
+            plumber_page = plumber_pdf.pages[i]
+            tables = plumber_page.extract_tables()
+            for t_index, table in enumerate(tables, start=1):
+                page_text += f"\n[Table {t_index} on Page {i+1}]\n"
+                for row in table:
+                    page_text += " | ".join(str(cell) if cell else "" for cell in row) + "\n"
+
+            all_text.append(page_text)
+
+    return "\n\n".join(all_text)
+
+
+# Usage
+pdf_content = read_pdf_with_tables("example.pdf")
+print(pdf_content)
