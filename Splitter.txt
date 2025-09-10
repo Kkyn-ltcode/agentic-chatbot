@@ -1,1 +1,1 @@
-https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.6/doc/doc_en/models_list_en.md#detection-model
+https://paddleocr.bj.bcebos.com/PP-OCRv4/multilingual/ch_PP-OCRv4_rec_infer.tar
