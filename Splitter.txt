@@ -1,16 +1,88 @@
-poppler_path = r"C:\poppler\Library\bin"                    # change to your poppler bin folder
-tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"   # change if needed
+import os
+import fitz           # PyMuPDF
+import pdfplumber
+from pdf2image import convert_from_path
+from paddleocr import PaddleOCR
 
-res = read_pdf_with_tables(
-    r"C:\Users\you\Documents\converted.pdf",
-    poppler_path=poppler_path,
-    tesseract_cmd=tesseract_cmd,
-    ocr_lang="vie",                 # "vie" for Vietnamese OCR, or "eng" for English
-    save_tables_csv_dir=r"C:\temp\tables"   # optional
-)
+def read_pdf_with_tables(path, poppler_path=None, ocr_lang="vi", save_tables_csv_dir=None):
+    path = os.path.abspath(path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"File not found: {path}")
+    print("Opening:", path)
 
-# write plain text output:
-with open(r"C:\temp\extracted.txt", "w", encoding="utf-8") as f:
+    # Initialize PaddleOCR (CPU-only, Vietnamese)
+    ocr = PaddleOCR(use_angle_cls=True, lang=ocr_lang, use_gpu=False)
+
+    # Open PDF with PyMuPDF + pdfplumber
+    doc = fitz.open(path)
+    plumber_pdf = pdfplumber.open(path)
+
+    results = []
+    for i, page in enumerate(doc):
+        print(f"\n--- Processing page {i+1}/{len(doc)} ---")
+        page_text = ""
+
+        # 1) Try PyMuPDF text extraction
+        text = page.get_text("text") or ""
+        if text.strip():
+            print("PyMuPDF extracted text (len)", len(text))
+            page_text = text
+        else:
+            print("No text found → fallback to OCR with PaddleOCR")
+            images = convert_from_path(
+                path,
+                first_page=i+1,
+                last_page=i+1,
+                poppler_path=poppler_path
+            )
+            img = images[0]
+
+            # OCR with PaddleOCR
+            ocr_result = ocr.ocr(img)
+            text_lines = [line[1][0] for line in ocr_result[0]]
+            page_text = "\n".join(text_lines)
+            print("OCR extracted text (len)", len(page_text))
+
+        # 2) Extract tables with pdfplumber
+        tables = []
+        try:
+            plumber_page = plumber_pdf.pages[i]
+            tables = plumber_page.extract_tables()
+            if tables:
+                print(f"pdfplumber found {len(tables)} table(s)")
+        except Exception as e:
+            print("pdfplumber table extraction error:", e)
+
+        # 3) Optionally save tables as CSVs
+        if save_tables_csv_dir and tables:
+            import pandas as pd
+            os.makedirs(save_tables_csv_dir, exist_ok=True)
+            for tidx, tab in enumerate(tables, start=1):
+                try:
+                    df = pd.DataFrame(tab[1:], columns=tab[0]) if len(tab) > 1 else pd.DataFrame(tab)
+                except Exception:
+                    df = pd.DataFrame(tab)
+                out_csv = os.path.join(save_tables_csv_dir, f"page{ i+1 }_table{ tidx }.csv")
+                df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+                print("Saved table CSV:", out_csv)
+
+        results.append({
+            "page": i+1,
+            "text": page_text,
+            "tables": tables
+        })
+
+    doc.close()
+    plumber_pdf.close()
+    return results
+
+
+# 🔹 Example usage
+poppler_path = r"C:\poppler\Library\bin"   # change this to your Poppler bin path
+res = read_pdf_with_tables("example.pdf", poppler_path=poppler_path, ocr_lang="vi")
+
+# Save extracted text
+with open("extracted.txt", "w", encoding="utf-8") as f:
     for p in res:
         f.write(f"--- Page {p['page']} ---\n")
         f.write(p['text'] + "\n\n")
