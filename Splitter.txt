@@ -1,139 +1,16 @@
-import os
-import fitz           # PyMuPDF
-import pdfplumber
-from pdf2image import convert_from_path
-import pytesseract
-import traceback
+poppler_path = r"C:\poppler\Library\bin"                    # change to your poppler bin folder
+tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"   # change if needed
 
-def read_pdf_with_tables(path,
-                         poppler_path=None,
-                         tesseract_cmd=None,
-                         ocr_lang="vie",           # default Vietnamese; change to "eng" if needed
-                         save_tables_csv_dir=None):
-    # --- basic checks + debug header ---
-    path = os.path.abspath(path)
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"File not found: {path}")
-    print("Opening:", path)
-    with open(path, "rb") as f:
-        header = f.read(8)
-    print("First bytes:", header[:8])
-    if not header.startswith(b"%PDF-"):
-        print("WARNING: file does not start with %PDF-. It may be image/spool/DRM/prn. OCR fallback will be used when necessary.")
+res = read_pdf_with_tables(
+    r"C:\Users\you\Documents\converted.pdf",
+    poppler_path=poppler_path,
+    tesseract_cmd=tesseract_cmd,
+    ocr_lang="vie",                 # "vie" for Vietnamese OCR, or "eng" for English
+    save_tables_csv_dir=r"C:\temp\tables"   # optional
+)
 
-    # configure tesseract if provided
-    if tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-        print("Using tesseract at:", pytesseract.pytesseract.tesseract_cmd)
-
-    # try open with fitz
-    doc = None
-    try:
-        doc = fitz.open(path)
-        print("PyMuPDF opened file. pages =", len(doc))
-    except Exception as e:
-        print("PyMuPDF failed to open file:", e)
-        doc = None
-
-    # try open with pdfplumber
-    plumber_pdf = None
-    try:
-        plumber_pdf = pdfplumber.open(path)
-        print("pdfplumber opened file. pages =", len(plumber_pdf.pages))
-    except Exception as e:
-        print("pdfplumber failed to open file:", e)
-        plumber_pdf = None
-
-    # determine page count
-    page_count = None
-    if doc:
-        page_count = len(doc)
-    elif plumber_pdf:
-        page_count = len(plumber_pdf.pages)
-    else:
-        # fallback: try converting all pages to images (this will require poppler_path)
-        try:
-            imgs = convert_from_path(path, poppler_path=poppler_path)
-            page_count = len(imgs)
-            print("Determined page_count from pdf2image:", page_count)
-        except Exception as e:
-            raise RuntimeError("Unable to determine page count with any backend. "
-                               "Check poppler_path or file validity.\n" + str(e))
-
-    results = []
-    for i in range(page_count):
-        print(f"\n--- Processing page {i+1}/{page_count} ---")
-        page_text = ""
-        tables_on_page = []
-
-        # 1) Try PyMuPDF text extraction
-        if doc:
-            try:
-                page = doc[i]
-                text = page.get_text("text") or ""
-                if text.strip():
-                    print("PyMuPDF extracted text (len)", len(text))
-                    page_text = text
-                else:
-                    print("PyMuPDF found no text; will fallback to OCR for this page.")
-            except Exception as e:
-                print("PyMuPDF page extraction error:", e)
-                page_text = ""
-
-        # 2) If no text so far, use OCR on that single page (pdf2image + pytesseract)
-        if not page_text.strip():
-            try:
-                imgs = convert_from_path(path, first_page=i+1, last_page=i+1, poppler_path=poppler_path)
-            except Exception as e:
-                tb = traceback.format_exc()
-                raise RuntimeError(f"pdf2image.convert_from_path failed for page {i+1}. "
-                                   f"Check poppler_path and pdftoppm installation. Error: {e}\n{tb}")
-            img = imgs[0]
-            try:
-                text = pytesseract.image_to_string(img, lang=ocr_lang)
-                print("OCR extracted text (len)", len(text))
-                page_text = text
-            except Exception as e:
-                print("pytesseract OCR error:", e)
-                page_text = ""
-
-        # 3) Extract tables with pdfplumber (if available)
-        if plumber_pdf:
-            try:
-                pl_page = plumber_pdf.pages[i]
-                tables = pl_page.extract_tables()
-                if tables:
-                    print(f"pdfplumber found {len(tables)} table(s) on page {i+1}")
-                for t in tables:
-                    # tables are list-of-rows (each row is list-of-cells)
-                    tables_on_page.append(t)
-            except Exception as e:
-                print("pdfplumber table extraction error on page", i+1, ":", e)
-
-        # 4) Optionally save tables to CSV files
-        if save_tables_csv_dir and tables_on_page:
-            import pandas as pd
-            os.makedirs(save_tables_csv_dir, exist_ok=True)
-            for tidx, tab in enumerate(tables_on_page, start=1):
-                # try use first row as header if plausible
-                try:
-                    df = pd.DataFrame(tab[1:], columns=tab[0]) if len(tab) > 1 else pd.DataFrame(tab)
-                except Exception:
-                    df = pd.DataFrame(tab)
-                out_csv = os.path.join(save_tables_csv_dir, f"page{ i+1 }_table{ tidx }.csv")
-                df.to_csv(out_csv, index=False, encoding="utf-8-sig")
-                print("Saved table CSV:", out_csv)
-
-        results.append({
-            "page": i+1,
-            "text": page_text,
-            "tables": tables_on_page
-        })
-
-    # close resources
-    if doc:
-        doc.close()
-    if plumber_pdf:
-        plumber_pdf.close()
-
-    return results
+# write plain text output:
+with open(r"C:\temp\extracted.txt", "w", encoding="utf-8") as f:
+    for p in res:
+        f.write(f"--- Page {p['page']} ---\n")
+        f.write(p['text'] + "\n\n")
