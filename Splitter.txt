@@ -1,170 +1,98 @@
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import numpy as np
-from scipy.interpolate import make_interp_spline
+from datetime import datetime
 
 # Read the CSV file
-# Replace 'your_file.csv' with your actual filename
 df = pd.read_csv('your_file.csv')
 
-# Assuming columns are 'ID' and 'timestamp'
-df.columns = ['ID', 'timestamp']
+# Clean column names (remove extra spaces)
+df.columns = df.columns.str.strip()
 
-# Convert timestamp to datetime
-df['timestamp'] = pd.to_datetime(df['timestamp'])
+# Convert time column to datetime
+# Adjust column names based on your actual CSV
+time_col = [col for col in df.columns if 'time' in col.lower() or 'date' in col.lower()][0]
+count_col = [col for col in df.columns if 'count' in col.lower() or 'value' in col.lower()][0]
 
-# Count records per day
-daily_counts = df.groupby(df['timestamp'].dt.date).size().reset_index()
-daily_counts.columns = ['date', 'count']
-daily_counts['date'] = pd.to_datetime(daily_counts['date'])
-daily_counts = daily_counts.sort_values('date')
+df[time_col] = pd.to_datetime(df[time_col])
+df = df.sort_values(time_col)
 
-# Create smooth curve using rolling average
-window = 7
-daily_counts['smooth_count'] = daily_counts['count'].rolling(window=window, center=True).mean()
-
-# Fill NaN values at the edges
-daily_counts['smooth_count'] = daily_counts['smooth_count'].fillna(daily_counts['count'])
-
-# Create even smoother curve with spline interpolation
-x = np.arange(len(daily_counts))
-y = daily_counts['smooth_count'].values
-
-# Create more points for ultra-smooth curve
-x_smooth = np.linspace(x.min(), x.max(), len(x) * 3)
-spl = make_interp_spline(x, y, k=3)
-y_smooth = spl(x_smooth)
-
-# Create corresponding dates for smooth curve
-date_smooth = pd.date_range(start=daily_counts['date'].min(), 
-                            end=daily_counts['date'].max(), 
-                            periods=len(x_smooth))
-
-# Create trend line
-z = np.polyfit(x, y, 3)
-p = np.poly1d(z)
-trend = p(x_smooth)
-
-# Define color segments
-colors = ['#F4A460', '#E88AA6', '#9370DB', '#87CEEB']
-n_segments = len(colors)
-segment_size = len(date_smooth) // n_segments
-
-# Create figure
+# Create the figure
 fig = go.Figure()
 
-# Add colored segments with gradient effect
-for i in range(n_segments):
-    start_idx = i * segment_size
-    end_idx = (i + 1) * segment_size if i < n_segments - 1 else len(date_smooth)
-    
-    # Add filled area
-    fig.add_trace(go.Scatter(
-        x=date_smooth[start_idx:end_idx],
-        y=y_smooth[start_idx:end_idx],
-        fill='tozeroy',
-        fillcolor=colors[i],
-        opacity=0.15,
-        line=dict(width=0),
-        showlegend=False,
-        hoverinfo='skip'
-    ))
-    
-    # Add line
-    fig.add_trace(go.Scatter(
-        x=date_smooth[start_idx:end_idx],
-        y=y_smooth[start_idx:end_idx],
-        mode='lines',
-        line=dict(color=colors[i], width=3),
-        showlegend=False,
-        hovertemplate='<b>Date:</b> %{x|%b %d, %Y}<br><b>Count:</b> %{y:.0f}<extra></extra>'
-    ))
-
-# Add trend line
+# Add the line with gradient fill
 fig.add_trace(go.Scatter(
-    x=date_smooth,
-    y=trend,
-    mode='lines',
-    line=dict(color='gray', width=2, dash='dot'),
-    opacity=0.5,
-    name='Trend',
-    showlegend=True,
-    hovertemplate='<b>Trend:</b> %{y:.0f}<extra></extra>'
-))
-
-# Add marker at the latest point
-fig.add_trace(go.Scatter(
-    x=[date_smooth[-1]],
-    y=[y_smooth[-1]],
-    mode='markers',
-    marker=dict(
-        size=12,
-        color=colors[-1],
-        line=dict(color='white', width=3)
+    x=df[time_col],
+    y=df[count_col],
+    mode='lines+markers',
+    name='Count',
+    line=dict(
+        color='rgb(147, 51, 234)',  # Purple color
+        width=3,
+        shape='spline',  # Smooth curve
+        smoothing=1.3
     ),
-    showlegend=False,
-    hovertemplate='<b>Latest:</b> %{y:.0f}<extra></extra>'
+    marker=dict(
+        size=8,
+        color='rgb(147, 51, 234)',
+        line=dict(color='white', width=2)
+    ),
+    fill='tozeroy',
+    fillcolor='rgba(147, 51, 234, 0.2)',  # Light purple fill
+    hovertemplate='<b>%{x|%b %d, %Y}</b><br>Count: %{y}<extra></extra>'
 ))
 
-# Update layout with beautiful styling
+# Update layout for a clean, modern look
 fig.update_layout(
-    title={
-        'text': 'Daily Record Count Over Time',
-        'x': 0.5,
-        'xanchor': 'center',
-        'font': {'size': 24, 'color': '#333333', 'family': 'Arial, sans-serif'}
-    },
+    title=dict(
+        text='Time Series Analysis',
+        font=dict(size=24, color='#1f2937', family='Arial, sans-serif'),
+        x=0.05
+    ),
     xaxis=dict(
-        title='',
+        title='Date',
         showgrid=True,
+        gridcolor='rgba(229, 231, 235, 0.8)',
         gridwidth=1,
-        gridcolor='rgba(128, 128, 128, 0.1)',
-        showline=True,
-        linewidth=1,
-        linecolor='rgba(128, 128, 128, 0.3)',
-        tickformat='%b',
-        dtick='M1'
+        zeroline=False,
+        tickfont=dict(size=12, color='#6b7280'),
+        titlefont=dict(size=14, color='#374151')
     ),
     yaxis=dict(
-        title='',
+        title='Count',
         showgrid=True,
+        gridcolor='rgba(229, 231, 235, 0.8)',
         gridwidth=1,
-        gridcolor='rgba(128, 128, 128, 0.1)',
-        showline=True,
-        linewidth=1,
-        linecolor='rgba(128, 128, 128, 0.3)',
+        zeroline=False,
+        tickfont=dict(size=12, color='#6b7280'),
+        titlefont=dict(size=14, color='#374151')
     ),
-    plot_bgcolor='#FAFAFA',
-    paper_bgcolor='white',
+    plot_bgcolor='white',
+    paper_bgcolor='#f9fafb',
     hovermode='x unified',
-    height=600,
+    hoverlabel=dict(
+        bgcolor='white',
+        font_size=13,
+        font_family='Arial, sans-serif',
+        bordercolor='#e5e7eb'
+    ),
     margin=dict(l=60, r=40, t=80, b=60),
-    font=dict(family='Arial, sans-serif', color='#666666', size=12)
+    height=600
 )
 
-# Save as HTML
-fig.write_html('beautiful_timeline.html')
-print("Beautiful interactive timeline saved as 'beautiful_timeline.html'")
+# Add subtle box around the plot
+fig.update_xaxes(showline=True, linewidth=1, linecolor='#e5e7eb', mirror=False)
+fig.update_yaxes(showline=True, linewidth=1, linecolor='#e5e7eb', mirror=False)
 
-# Also save as static image (requires kaleido: pip install kaleido)
-try:
-    fig.write_image('beautiful_timeline.png', width=1600, height=600, scale=2)
-    print("Static image saved as 'beautiful_timeline.png'")
-except:
-    print("To save as PNG, install kaleido: pip install kaleido")
-
-# Display the chart
+# Show the figure
 fig.show()
 
-# Print summary statistics
-print("\n" + "="*60)
-print("SUMMARY STATISTICS")
-print("="*60)
-print(f"Total Records: {df.shape[0]:,}")
-print(f"Unique IDs: {df['ID'].nunique():,}")
-print(f"Date Range: {daily_counts['date'].min().strftime('%Y-%m-%d')} to {daily_counts['date'].max().strftime('%Y-%m-%d')}")
-print(f"Average Daily Count: {daily_counts['count'].mean():.2f}")
-print(f"Max Daily Count: {daily_counts['count'].max()} (on {daily_counts.loc[daily_counts['count'].idxmax(), 'date'].strftime('%Y-%m-%d')})")
-print(f"Min Daily Count: {daily_counts['count'].min()} (on {daily_counts.loc[daily_counts['count'].idxmin(), 'date'].strftime('%Y-%m-%d')})")
-print("="*60)
+# Optional: Save as HTML
+fig.write_html('time_series_chart.html')
+
+# Print some statistics
+print(f"\n📊 Data Summary:")
+print(f"Total data points: {len(df)}")
+print(f"Average count: {df[count_col].mean():.2f}")
+print(f"Max count: {df[count_col].max()}")
+print(f"Min count: {df[count_col].min()}")
+print(f"Date range: {df[time_col].min().strftime('%Y-%m-%d')} to {df[time_col].max().strftime('%Y-%m-%d')}")
