@@ -75,16 +75,93 @@ weekday_counts = weekday_counts.reindex(weekday_order)
 print(weekday_counts.to_string())
 print()
 
-# Create visualizations
+# Create beautiful timeline visualization inspired by the reference image
+fig_timeline = plt.figure(figsize=(16, 6))
+ax_main = fig_timeline.add_subplot(111)
+
+# Prepare data - resample to smooth out the visualization
+daily_data = daily_counts.reset_index()
+daily_data.columns = ['date', 'count']
+daily_data['date'] = pd.to_datetime(daily_data['date'])
+daily_data = daily_data.set_index('date')
+
+# Create smooth line using rolling average
+window = 7  # 7-day rolling average for smoothing
+smooth_data = daily_data.rolling(window=window, center=True).mean()
+
+# Define color gradient segments
+colors = ['#F4A460', '#E88AA6', '#9370DB', '#87CEEB']  # Orange, Pink, Purple, Light Blue
+n_segments = len(colors)
+total_points = len(smooth_data)
+segment_size = total_points // n_segments
+
+# Plot with gradient colors and filled areas
+for i in range(n_segments):
+    start_idx = i * segment_size
+    end_idx = (i + 1) * segment_size if i < n_segments - 1 else total_points
+    
+    segment = smooth_data.iloc[start_idx:end_idx]
+    
+    # Plot line
+    ax_main.plot(segment.index, segment['count'], 
+                color=colors[i], linewidth=3, alpha=0.9, zorder=2)
+    
+    # Fill area under curve
+    ax_main.fill_between(segment.index, segment['count'], 
+                         alpha=0.15, color=colors[i], zorder=1)
+
+# Add trend line (dotted)
+z = np.polyfit(range(len(smooth_data)), smooth_data['count'].fillna(method='ffill'), 3)
+p = np.poly1d(z)
+trend_line = p(range(len(smooth_data)))
+ax_main.plot(smooth_data.index, trend_line, 
+            linestyle='--', color='gray', linewidth=2, alpha=0.6, zorder=1)
+
+# Add current point marker (if you want to highlight the latest point)
+latest_point = smooth_data.iloc[-1]
+ax_main.scatter(smooth_data.index[-1], latest_point['count'], 
+               color=colors[-1], s=100, zorder=3, edgecolors='white', linewidth=2)
+
+# Styling
+ax_main.set_facecolor('#FAFAFA')
+ax_main.spines['top'].set_visible(False)
+ax_main.spines['right'].set_visible(False)
+ax_main.spines['left'].set_color('#E0E0E0')
+ax_main.spines['bottom'].set_color('#E0E0E0')
+ax_main.grid(True, alpha=0.2, linestyle='-', linewidth=0.5, color='gray')
+ax_main.set_axisbelow(True)
+
+# Format x-axis to show months
+ax_main.xaxis.set_major_locator(plt.matplotlib.dates.MonthLocator())
+ax_main.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%b'))
+
+# Labels
+ax_main.set_xlabel('')
+ax_main.set_ylabel('')
+ax_main.tick_params(axis='both', which='major', labelsize=10, colors='#666666')
+
+plt.tight_layout()
+plt.savefig('beautiful_timeline.png', dpi=300, bbox_inches='tight', facecolor='white')
+print("Beautiful timeline saved as 'beautiful_timeline.png'")
+plt.show()
+
+# Create comprehensive visualizations
 fig = plt.figure(figsize=(18, 12))
 
-# Plot 1: Timeline of records
+# Plot 1: Beautiful Timeline (embedded version)
 ax1 = plt.subplot(3, 2, 1)
-daily_counts.plot(ax=ax1, color='steelblue', linewidth=2)
+for i in range(n_segments):
+    start_idx = i * segment_size
+    end_idx = (i + 1) * segment_size if i < n_segments - 1 else total_points
+    segment = smooth_data.iloc[start_idx:end_idx]
+    ax1.plot(segment.index, segment['count'], color=colors[i], linewidth=2.5, alpha=0.9)
+    ax1.fill_between(segment.index, segment['count'], alpha=0.15, color=colors[i])
+ax1.plot(smooth_data.index, trend_line, linestyle='--', color='gray', linewidth=1.5, alpha=0.6)
 ax1.set_title('Daily Record Count Over Time', fontsize=14, fontweight='bold')
 ax1.set_xlabel('Date')
 ax1.set_ylabel('Number of Records')
-ax1.grid(True, alpha=0.3)
+ax1.grid(True, alpha=0.2)
+ax1.set_facecolor('#FAFAFA')
 
 # Plot 2: Monthly distribution
 ax2 = plt.subplot(3, 2, 2)
