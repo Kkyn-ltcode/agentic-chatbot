@@ -1,1 +1,60 @@
-https://paddleocr.bj.bcebos.com/PP-OCRv4/multilingual/ch_PP-OCRv4_rec_infer.tar
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+
+# Example data
+months = pd.date_range("2024-01-01", "2024-12-01", freq="MS")
+values = [10, 25, 15, 30, 22, 18, 35, 12, 14, 26, 20, 40]
+
+df = pd.DataFrame({"month": months, "value": values})
+
+# Forecast after September
+cutoff = 8  # index for September
+forecast_x = df["month"][cutoff:]
+forecast_y = np.linspace(df["value"].iloc[cutoff], df["value"].iloc[-1], len(forecast_x))
+
+# --- Plotly Figure ---
+fig = go.Figure()
+
+# Main solid line
+fig.add_trace(go.Scatter(
+    x=df["month"], 
+    y=df["value"], 
+    mode="lines",
+    line=dict(color="purple", width=3),
+    name="Actual",
+    fill="tozeroy",
+    fillcolor="rgba(186,85,211,0.2)"  # light gradient-like effect
+))
+
+# Forecast dotted line
+fig.add_trace(go.Scatter(
+    x=forecast_x, 
+    y=forecast_y, 
+    mode="lines",
+    line=dict(color="black", width=2, dash="dot"),
+    name="Forecast"
+))
+
+# Highlight cutoff point
+fig.add_trace(go.Scatter(
+    x=[df["month"].iloc[cutoff]], 
+    y=[df["value"].iloc[cutoff]], 
+    mode="markers",
+    marker=dict(size=12, color="white", line=dict(color="purple", width=3)),
+    name="Cutoff"
+))
+
+# Layout styling
+fig.update_layout(
+    title="Monthly Trend with Forecast",
+    xaxis_title="Month",
+    yaxis_title="Value",
+    template="plotly_white",
+    showlegend=False,
+    width=950, height=500,
+    xaxis=dict(showgrid=False),
+    yaxis=dict(showgrid=True, gridcolor="rgba(200,200,200,0.2)"),
+)
+
+fig.show()
