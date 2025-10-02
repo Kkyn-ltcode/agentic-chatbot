@@ -1,60 +1,149 @@
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
 import numpy as np
-import plotly.graph_objects as go
 
-# Example data
-months = pd.date_range("2024-01-01", "2024-12-01", freq="MS")
-values = [10, 25, 15, 30, 22, 18, 35, 12, 14, 26, 20, 40]
+# Read the CSV file
+# Replace 'your_file.csv' with your actual filename
+df = pd.read_csv('your_file.csv')
 
-df = pd.DataFrame({"month": months, "value": values})
+# Assuming columns are 'ID' and 'timestamp'
+# Adjust column names if needed
+df.columns = ['ID', 'timestamp']
 
-# Forecast after September
-cutoff = 8  # index for September
-forecast_x = df["month"][cutoff:]
-forecast_y = np.linspace(df["value"].iloc[cutoff], df["value"].iloc[-1], len(forecast_x))
+# Convert timestamp to datetime
+df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-# --- Plotly Figure ---
-fig = go.Figure()
+# Extract date components
+df['year'] = df['timestamp'].dt.year
+df['month'] = df['timestamp'].dt.month
+df['day'] = df['timestamp'].dt.day
+df['date'] = df['timestamp'].dt.date
+df['month_name'] = df['timestamp'].dt.strftime('%B')
+df['weekday'] = df['timestamp'].dt.day_name()
 
-# Main solid line
-fig.add_trace(go.Scatter(
-    x=df["month"], 
-    y=df["value"], 
-    mode="lines",
-    line=dict(color="purple", width=3),
-    name="Actual",
-    fill="tozeroy",
-    fillcolor="rgba(186,85,211,0.2)"  # light gradient-like effect
-))
+# Set style for better-looking plots
+sns.set_style("whitegrid")
+plt.rcParams['figure.figsize'] = (15, 10)
 
-# Forecast dotted line
-fig.add_trace(go.Scatter(
-    x=forecast_x, 
-    y=forecast_y, 
-    mode="lines",
-    line=dict(color="black", width=2, dash="dot"),
-    name="Forecast"
-))
+# Create a comprehensive report
+print("=" * 80)
+print("TIMESTAMP DATA ANALYSIS REPORT")
+print("=" * 80)
+print()
 
-# Highlight cutoff point
-fig.add_trace(go.Scatter(
-    x=[df["month"].iloc[cutoff]], 
-    y=[df["value"].iloc[cutoff]], 
-    mode="markers",
-    marker=dict(size=12, color="white", line=dict(color="purple", width=3)),
-    name="Cutoff"
-))
+# 1. Basic Statistics
+print("1. BASIC STATISTICS")
+print("-" * 80)
+print(f"Total Records: {len(df)}")
+print(f"Unique IDs: {df['ID'].nunique()}")
+print(f"Unique Dates: {df['date'].nunique()}")
+print(f"Date Range: {df['timestamp'].min().date()} to {df['timestamp'].max().date()}")
+print(f"Duration: {(df['timestamp'].max() - df['timestamp'].min()).days} days")
+print()
 
-# Layout styling
-fig.update_layout(
-    title="Monthly Trend with Forecast",
-    xaxis_title="Month",
-    yaxis_title="Value",
-    template="plotly_white",
-    showlegend=False,
-    width=950, height=500,
-    xaxis=dict(showgrid=False),
-    yaxis=dict(showgrid=True, gridcolor="rgba(200,200,200,0.2)"),
-)
+# 2. Records per ID
+print("2. TOP 10 IDs BY RECORD COUNT")
+print("-" * 80)
+id_counts = df['ID'].value_counts().head(10)
+print(id_counts.to_string())
+print()
 
-fig.show()
+# 3. Daily Statistics
+print("3. DAILY STATISTICS")
+print("-" * 80)
+daily_counts = df.groupby('date').size()
+print(f"Average records per day: {daily_counts.mean():.2f}")
+print(f"Max records in a day: {daily_counts.max()} (on {daily_counts.idxmax()})")
+print(f"Min records in a day: {daily_counts.min()} (on {daily_counts.idxmin()})")
+print()
+
+# 4. Monthly Statistics
+print("4. MONTHLY STATISTICS")
+print("-" * 80)
+monthly_counts = df.groupby(['year', 'month_name']).size().reset_index(name='count')
+print(monthly_counts.to_string(index=False))
+print()
+
+# 5. Weekday Distribution
+print("5. WEEKDAY DISTRIBUTION")
+print("-" * 80)
+weekday_counts = df['weekday'].value_counts()
+weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+weekday_counts = weekday_counts.reindex(weekday_order)
+print(weekday_counts.to_string())
+print()
+
+# Create visualizations
+fig = plt.figure(figsize=(18, 12))
+
+# Plot 1: Timeline of records
+ax1 = plt.subplot(3, 2, 1)
+daily_counts.plot(ax=ax1, color='steelblue', linewidth=2)
+ax1.set_title('Daily Record Count Over Time', fontsize=14, fontweight='bold')
+ax1.set_xlabel('Date')
+ax1.set_ylabel('Number of Records')
+ax1.grid(True, alpha=0.3)
+
+# Plot 2: Monthly distribution
+ax2 = plt.subplot(3, 2, 2)
+month_counts = df['month_name'].value_counts()
+month_order = ['January', 'February', 'March', 'April', 'May', 'June', 
+               'July', 'August', 'September', 'October', 'November', 'December']
+month_counts = month_counts.reindex([m for m in month_order if m in month_counts.index])
+month_counts.plot(kind='bar', ax=ax2, color='coral')
+ax2.set_title('Records by Month', fontsize=14, fontweight='bold')
+ax2.set_xlabel('Month')
+ax2.set_ylabel('Number of Records')
+ax2.tick_params(axis='x', rotation=45)
+
+# Plot 3: Weekday distribution
+ax3 = plt.subplot(3, 2, 3)
+weekday_counts.plot(kind='bar', ax=ax3, color='lightgreen')
+ax3.set_title('Records by Weekday', fontsize=14, fontweight='bold')
+ax3.set_xlabel('Day of Week')
+ax3.set_ylabel('Number of Records')
+ax3.tick_params(axis='x', rotation=45)
+
+# Plot 4: Top 15 IDs
+ax4 = plt.subplot(3, 2, 4)
+df['ID'].value_counts().head(15).plot(kind='barh', ax=ax4, color='mediumpurple')
+ax4.set_title('Top 15 IDs by Record Count', fontsize=14, fontweight='bold')
+ax4.set_xlabel('Number of Records')
+ax4.set_ylabel('ID')
+
+# Plot 5: Cumulative records over time
+ax5 = plt.subplot(3, 2, 5)
+cumulative = daily_counts.cumsum()
+cumulative.plot(ax=ax5, color='darkgreen', linewidth=2)
+ax5.set_title('Cumulative Records Over Time', fontsize=14, fontweight='bold')
+ax5.set_xlabel('Date')
+ax5.set_ylabel('Cumulative Records')
+ax5.grid(True, alpha=0.3)
+
+# Plot 6: Heatmap of records by day of month and month
+ax6 = plt.subplot(3, 2, 6)
+heatmap_data = df.groupby(['month', 'day']).size().reset_index(name='count')
+heatmap_pivot = heatmap_data.pivot(index='day', columns='month', values='count')
+sns.heatmap(heatmap_pivot, ax=ax6, cmap='YlOrRd', cbar_kws={'label': 'Record Count'})
+ax6.set_title('Heatmap: Records by Day and Month', fontsize=14, fontweight='bold')
+ax6.set_xlabel('Month')
+ax6.set_ylabel('Day of Month')
+
+plt.tight_layout()
+plt.savefig('timestamp_analysis_report.png', dpi=300, bbox_inches='tight')
+print("Visualizations saved as 'timestamp_analysis_report.png'")
+plt.show()
+
+# Export summary tables to CSV
+print("\nExporting summary tables...")
+id_counts.to_csv('id_summary.csv', header=['count'])
+daily_counts.to_csv('daily_summary.csv', header=['count'])
+monthly_counts.to_csv('monthly_summary.csv', index=False)
+
+print("Summary tables exported:")
+print("  - id_summary.csv")
+print("  - daily_summary.csv")
+print("  - monthly_summary.csv")
+print("\nAnalysis complete!")
