@@ -1,226 +1,170 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from datetime import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import numpy as np
+from scipy.interpolate import make_interp_spline
 
 # Read the CSV file
 # Replace 'your_file.csv' with your actual filename
 df = pd.read_csv('your_file.csv')
 
 # Assuming columns are 'ID' and 'timestamp'
-# Adjust column names if needed
 df.columns = ['ID', 'timestamp']
 
 # Convert timestamp to datetime
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-# Extract date components
-df['year'] = df['timestamp'].dt.year
-df['month'] = df['timestamp'].dt.month
-df['day'] = df['timestamp'].dt.day
-df['date'] = df['timestamp'].dt.date
-df['month_name'] = df['timestamp'].dt.strftime('%B')
-df['weekday'] = df['timestamp'].dt.day_name()
+# Count records per day
+daily_counts = df.groupby(df['timestamp'].dt.date).size().reset_index()
+daily_counts.columns = ['date', 'count']
+daily_counts['date'] = pd.to_datetime(daily_counts['date'])
+daily_counts = daily_counts.sort_values('date')
 
-# Set style for better-looking plots
-sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = (15, 10)
+# Create smooth curve using rolling average
+window = 7
+daily_counts['smooth_count'] = daily_counts['count'].rolling(window=window, center=True).mean()
 
-# Create a comprehensive report
-print("=" * 80)
-print("TIMESTAMP DATA ANALYSIS REPORT")
-print("=" * 80)
-print()
+# Fill NaN values at the edges
+daily_counts['smooth_count'] = daily_counts['smooth_count'].fillna(daily_counts['count'])
 
-# 1. Basic Statistics
-print("1. BASIC STATISTICS")
-print("-" * 80)
-print(f"Total Records: {len(df)}")
-print(f"Unique IDs: {df['ID'].nunique()}")
-print(f"Unique Dates: {df['date'].nunique()}")
-print(f"Date Range: {df['timestamp'].min().date()} to {df['timestamp'].max().date()}")
-print(f"Duration: {(df['timestamp'].max() - df['timestamp'].min()).days} days")
-print()
+# Create even smoother curve with spline interpolation
+x = np.arange(len(daily_counts))
+y = daily_counts['smooth_count'].values
 
-# 2. Records per ID
-print("2. TOP 10 IDs BY RECORD COUNT")
-print("-" * 80)
-id_counts = df['ID'].value_counts().head(10)
-print(id_counts.to_string())
-print()
+# Create more points for ultra-smooth curve
+x_smooth = np.linspace(x.min(), x.max(), len(x) * 3)
+spl = make_interp_spline(x, y, k=3)
+y_smooth = spl(x_smooth)
 
-# 3. Daily Statistics
-print("3. DAILY STATISTICS")
-print("-" * 80)
-daily_counts = df.groupby('date').size()
-print(f"Average records per day: {daily_counts.mean():.2f}")
-print(f"Max records in a day: {daily_counts.max()} (on {daily_counts.idxmax()})")
-print(f"Min records in a day: {daily_counts.min()} (on {daily_counts.idxmin()})")
-print()
+# Create corresponding dates for smooth curve
+date_smooth = pd.date_range(start=daily_counts['date'].min(), 
+                            end=daily_counts['date'].max(), 
+                            periods=len(x_smooth))
 
-# 4. Monthly Statistics
-print("4. MONTHLY STATISTICS")
-print("-" * 80)
-monthly_counts = df.groupby(['year', 'month_name']).size().reset_index(name='count')
-print(monthly_counts.to_string(index=False))
-print()
-
-# 5. Weekday Distribution
-print("5. WEEKDAY DISTRIBUTION")
-print("-" * 80)
-weekday_counts = df['weekday'].value_counts()
-weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-weekday_counts = weekday_counts.reindex(weekday_order)
-print(weekday_counts.to_string())
-print()
-
-# Create beautiful timeline visualization inspired by the reference image
-fig_timeline = plt.figure(figsize=(16, 6))
-ax_main = fig_timeline.add_subplot(111)
-
-# Prepare data - resample to smooth out the visualization
-daily_data = daily_counts.reset_index()
-daily_data.columns = ['date', 'count']
-daily_data['date'] = pd.to_datetime(daily_data['date'])
-daily_data = daily_data.set_index('date')
-
-# Create smooth line using rolling average
-window = 7  # 7-day rolling average for smoothing
-smooth_data = daily_data.rolling(window=window, center=True).mean()
-
-# Define color gradient segments
-colors = ['#F4A460', '#E88AA6', '#9370DB', '#87CEEB']  # Orange, Pink, Purple, Light Blue
-n_segments = len(colors)
-total_points = len(smooth_data)
-segment_size = total_points // n_segments
-
-# Plot with gradient colors and filled areas
-for i in range(n_segments):
-    start_idx = i * segment_size
-    end_idx = (i + 1) * segment_size if i < n_segments - 1 else total_points
-    
-    segment = smooth_data.iloc[start_idx:end_idx]
-    
-    # Plot line
-    ax_main.plot(segment.index, segment['count'], 
-                color=colors[i], linewidth=3, alpha=0.9, zorder=2)
-    
-    # Fill area under curve
-    ax_main.fill_between(segment.index, segment['count'], 
-                         alpha=0.15, color=colors[i], zorder=1)
-
-# Add trend line (dotted)
-z = np.polyfit(range(len(smooth_data)), smooth_data['count'].fillna(method='ffill'), 3)
+# Create trend line
+z = np.polyfit(x, y, 3)
 p = np.poly1d(z)
-trend_line = p(range(len(smooth_data)))
-ax_main.plot(smooth_data.index, trend_line, 
-            linestyle='--', color='gray', linewidth=2, alpha=0.6, zorder=1)
+trend = p(x_smooth)
 
-# Add current point marker (if you want to highlight the latest point)
-latest_point = smooth_data.iloc[-1]
-ax_main.scatter(smooth_data.index[-1], latest_point['count'], 
-               color=colors[-1], s=100, zorder=3, edgecolors='white', linewidth=2)
+# Define color segments
+colors = ['#F4A460', '#E88AA6', '#9370DB', '#87CEEB']
+n_segments = len(colors)
+segment_size = len(date_smooth) // n_segments
 
-# Styling
-ax_main.set_facecolor('#FAFAFA')
-ax_main.spines['top'].set_visible(False)
-ax_main.spines['right'].set_visible(False)
-ax_main.spines['left'].set_color('#E0E0E0')
-ax_main.spines['bottom'].set_color('#E0E0E0')
-ax_main.grid(True, alpha=0.2, linestyle='-', linewidth=0.5, color='gray')
-ax_main.set_axisbelow(True)
+# Create figure
+fig = go.Figure()
 
-# Format x-axis to show months
-ax_main.xaxis.set_major_locator(plt.matplotlib.dates.MonthLocator())
-ax_main.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%b'))
-
-# Labels
-ax_main.set_xlabel('')
-ax_main.set_ylabel('')
-ax_main.tick_params(axis='both', which='major', labelsize=10, colors='#666666')
-
-plt.tight_layout()
-plt.savefig('beautiful_timeline.png', dpi=300, bbox_inches='tight', facecolor='white')
-print("Beautiful timeline saved as 'beautiful_timeline.png'")
-plt.show()
-
-# Create comprehensive visualizations
-fig = plt.figure(figsize=(18, 12))
-
-# Plot 1: Beautiful Timeline (embedded version)
-ax1 = plt.subplot(3, 2, 1)
+# Add colored segments with gradient effect
 for i in range(n_segments):
     start_idx = i * segment_size
-    end_idx = (i + 1) * segment_size if i < n_segments - 1 else total_points
-    segment = smooth_data.iloc[start_idx:end_idx]
-    ax1.plot(segment.index, segment['count'], color=colors[i], linewidth=2.5, alpha=0.9)
-    ax1.fill_between(segment.index, segment['count'], alpha=0.15, color=colors[i])
-ax1.plot(smooth_data.index, trend_line, linestyle='--', color='gray', linewidth=1.5, alpha=0.6)
-ax1.set_title('Daily Record Count Over Time', fontsize=14, fontweight='bold')
-ax1.set_xlabel('Date')
-ax1.set_ylabel('Number of Records')
-ax1.grid(True, alpha=0.2)
-ax1.set_facecolor('#FAFAFA')
+    end_idx = (i + 1) * segment_size if i < n_segments - 1 else len(date_smooth)
+    
+    # Add filled area
+    fig.add_trace(go.Scatter(
+        x=date_smooth[start_idx:end_idx],
+        y=y_smooth[start_idx:end_idx],
+        fill='tozeroy',
+        fillcolor=colors[i],
+        opacity=0.15,
+        line=dict(width=0),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    
+    # Add line
+    fig.add_trace(go.Scatter(
+        x=date_smooth[start_idx:end_idx],
+        y=y_smooth[start_idx:end_idx],
+        mode='lines',
+        line=dict(color=colors[i], width=3),
+        showlegend=False,
+        hovertemplate='<b>Date:</b> %{x|%b %d, %Y}<br><b>Count:</b> %{y:.0f}<extra></extra>'
+    ))
 
-# Plot 2: Monthly distribution
-ax2 = plt.subplot(3, 2, 2)
-month_counts = df['month_name'].value_counts()
-month_order = ['January', 'February', 'March', 'April', 'May', 'June', 
-               'July', 'August', 'September', 'October', 'November', 'December']
-month_counts = month_counts.reindex([m for m in month_order if m in month_counts.index])
-month_counts.plot(kind='bar', ax=ax2, color='coral')
-ax2.set_title('Records by Month', fontsize=14, fontweight='bold')
-ax2.set_xlabel('Month')
-ax2.set_ylabel('Number of Records')
-ax2.tick_params(axis='x', rotation=45)
+# Add trend line
+fig.add_trace(go.Scatter(
+    x=date_smooth,
+    y=trend,
+    mode='lines',
+    line=dict(color='gray', width=2, dash='dot'),
+    opacity=0.5,
+    name='Trend',
+    showlegend=True,
+    hovertemplate='<b>Trend:</b> %{y:.0f}<extra></extra>'
+))
 
-# Plot 3: Weekday distribution
-ax3 = plt.subplot(3, 2, 3)
-weekday_counts.plot(kind='bar', ax=ax3, color='lightgreen')
-ax3.set_title('Records by Weekday', fontsize=14, fontweight='bold')
-ax3.set_xlabel('Day of Week')
-ax3.set_ylabel('Number of Records')
-ax3.tick_params(axis='x', rotation=45)
+# Add marker at the latest point
+fig.add_trace(go.Scatter(
+    x=[date_smooth[-1]],
+    y=[y_smooth[-1]],
+    mode='markers',
+    marker=dict(
+        size=12,
+        color=colors[-1],
+        line=dict(color='white', width=3)
+    ),
+    showlegend=False,
+    hovertemplate='<b>Latest:</b> %{y:.0f}<extra></extra>'
+))
 
-# Plot 4: Top 15 IDs
-ax4 = plt.subplot(3, 2, 4)
-df['ID'].value_counts().head(15).plot(kind='barh', ax=ax4, color='mediumpurple')
-ax4.set_title('Top 15 IDs by Record Count', fontsize=14, fontweight='bold')
-ax4.set_xlabel('Number of Records')
-ax4.set_ylabel('ID')
+# Update layout with beautiful styling
+fig.update_layout(
+    title={
+        'text': 'Daily Record Count Over Time',
+        'x': 0.5,
+        'xanchor': 'center',
+        'font': {'size': 24, 'color': '#333333', 'family': 'Arial, sans-serif'}
+    },
+    xaxis=dict(
+        title='',
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(128, 128, 128, 0.1)',
+        showline=True,
+        linewidth=1,
+        linecolor='rgba(128, 128, 128, 0.3)',
+        tickformat='%b',
+        dtick='M1'
+    ),
+    yaxis=dict(
+        title='',
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(128, 128, 128, 0.1)',
+        showline=True,
+        linewidth=1,
+        linecolor='rgba(128, 128, 128, 0.3)',
+    ),
+    plot_bgcolor='#FAFAFA',
+    paper_bgcolor='white',
+    hovermode='x unified',
+    height=600,
+    margin=dict(l=60, r=40, t=80, b=60),
+    font=dict(family='Arial, sans-serif', color='#666666', size=12)
+)
 
-# Plot 5: Cumulative records over time
-ax5 = plt.subplot(3, 2, 5)
-cumulative = daily_counts.cumsum()
-cumulative.plot(ax=ax5, color='darkgreen', linewidth=2)
-ax5.set_title('Cumulative Records Over Time', fontsize=14, fontweight='bold')
-ax5.set_xlabel('Date')
-ax5.set_ylabel('Cumulative Records')
-ax5.grid(True, alpha=0.3)
+# Save as HTML
+fig.write_html('beautiful_timeline.html')
+print("Beautiful interactive timeline saved as 'beautiful_timeline.html'")
 
-# Plot 6: Heatmap of records by day of month and month
-ax6 = plt.subplot(3, 2, 6)
-heatmap_data = df.groupby(['month', 'day']).size().reset_index(name='count')
-heatmap_pivot = heatmap_data.pivot(index='day', columns='month', values='count')
-sns.heatmap(heatmap_pivot, ax=ax6, cmap='YlOrRd', cbar_kws={'label': 'Record Count'})
-ax6.set_title('Heatmap: Records by Day and Month', fontsize=14, fontweight='bold')
-ax6.set_xlabel('Month')
-ax6.set_ylabel('Day of Month')
+# Also save as static image (requires kaleido: pip install kaleido)
+try:
+    fig.write_image('beautiful_timeline.png', width=1600, height=600, scale=2)
+    print("Static image saved as 'beautiful_timeline.png'")
+except:
+    print("To save as PNG, install kaleido: pip install kaleido")
 
-plt.tight_layout()
-plt.savefig('timestamp_analysis_report.png', dpi=300, bbox_inches='tight')
-print("Visualizations saved as 'timestamp_analysis_report.png'")
-plt.show()
+# Display the chart
+fig.show()
 
-# Export summary tables to CSV
-print("\nExporting summary tables...")
-id_counts.to_csv('id_summary.csv', header=['count'])
-daily_counts.to_csv('daily_summary.csv', header=['count'])
-monthly_counts.to_csv('monthly_summary.csv', index=False)
-
-print("Summary tables exported:")
-print("  - id_summary.csv")
-print("  - daily_summary.csv")
-print("  - monthly_summary.csv")
-print("\nAnalysis complete!")
+# Print summary statistics
+print("\n" + "="*60)
+print("SUMMARY STATISTICS")
+print("="*60)
+print(f"Total Records: {df.shape[0]:,}")
+print(f"Unique IDs: {df['ID'].nunique():,}")
+print(f"Date Range: {daily_counts['date'].min().strftime('%Y-%m-%d')} to {daily_counts['date'].max().strftime('%Y-%m-%d')}")
+print(f"Average Daily Count: {daily_counts['count'].mean():.2f}")
+print(f"Max Daily Count: {daily_counts['count'].max()} (on {daily_counts.loc[daily_counts['count'].idxmax(), 'date'].strftime('%Y-%m-%d')})")
+print(f"Min Daily Count: {daily_counts['count'].min()} (on {daily_counts.loc[daily_counts['count'].idxmin(), 'date'].strftime('%Y-%m-%d')})")
+print("="*60)
