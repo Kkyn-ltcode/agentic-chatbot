@@ -1,18 +1,27 @@
-You are given one or more documents. Your task is to generate **one hard question** and its answer in strict JSON format.
+You are given two or more documents. Your task is to generate **one hard question** and its answer in strict JSON format.
 
 Requirements:
-- The question must require synthesizing multiple pieces of information within the document, or linking information across 2+ sections.  
-- The answer must include the original source link(s) or citation(s) already present in the document(s).  
-- The `reference` field must explicitly quote or summarize the exact part(s) of the document(s) that support the answer.  
+- The question must require synthesizing information from AT LEAST TWO different documents.  
+- The answer must combine information across documents to be correct.  
+- The answer must include the original source link(s) or citation(s) already present inside the documents.  
+- The `reference` field must explicitly quote or summarize the exact parts of EACH document that were used to answer.  
 - Output strictly in JSON, nothing else.
 
 JSON format:
 {
   "question_type": "hard",
   "question": "...",
-  "answer": "... (must include document’s source link)",
-  "reference": "... (the exact text or summarized info from the document that supports the answer)"
+  "answer": "... (must include documents’ source links)",
+  "reference": {
+      "document_1": "... (the exact text or summarized info from document 1 that supports the answer)",
+      "document_2": "... (the exact text or summarized info from document 2 that supports the answer)",
+      "...": "..."
+  }
 }
 
 Documents:
-<<<DOCUMENT TEXT HERE>>>
+<<<DOCUMENT 1 TEXT HERE>>>
+
+<<<DOCUMENT 2 TEXT HERE>>>
+
+(you may include more documents if needed)
