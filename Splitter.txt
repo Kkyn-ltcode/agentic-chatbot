@@ -1,26 +1,18 @@
-You are given a document. Your task is to generate **two medium-difficulty questions** and their answers in strict JSON format.
+You are given one or more documents. Your task is to generate **one hard question** and its answer in strict JSON format.
 
 Requirements:
-- Each question must require combining or slightly interpreting information from the document (not a direct copy-paste fact).  
-- The answer must include the original source link(s) or citation(s) already present in the document.  
-- The `reference` field must explicitly quote or summarize the part(s) of the document that support the answer.  
-- Output strictly in JSON, as a list of two objects.
+- The question must require synthesizing multiple pieces of information within the document, or linking information across 2+ sections.  
+- The answer must include the original source link(s) or citation(s) already present in the document(s).  
+- The `reference` field must explicitly quote or summarize the exact part(s) of the document(s) that support the answer.  
+- Output strictly in JSON, nothing else.
 
 JSON format:
-[
-  {
-    "question_type": "medium",
-    "question": "...",
-    "answer": "... (must include document’s source link)",
-    "reference": "... (the exact text or summarized info from the document that supports the answer)"
-  },
-  {
-    "question_type": "medium",
-    "question": "...",
-    "answer": "... (must include document’s source link)",
-    "reference": "... (the exact text or summarized info from the document that supports the answer)"
-  }
-]
+{
+  "question_type": "hard",
+  "question": "...",
+  "answer": "... (must include document’s source link)",
+  "reference": "... (the exact text or summarized info from the document that supports the answer)"
+}
 
-Document:
+Documents:
 <<<DOCUMENT TEXT HERE>>>
