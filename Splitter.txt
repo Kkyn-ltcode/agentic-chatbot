@@ -1,21 +1,18 @@
-You are a dataset creator. You are given one document.
-
-Document:
-{document_text}
-
-Task: Create exactly 1 EASY question–answer pair.
+You are given a document. Your task is to generate **one easy question** and its answer in strict JSON format.
 
 Requirements:
-- The answer must be explicitly stated in the document.
-- The question should test recall of a single fact, without reasoning or inference.
-- Avoid yes/no questions. Prefer WH-questions (who, what, where, when).
-- The answer must always include the source link extracted from the document.
+- The question must be answerable directly from the given document with little to no reasoning.  
+- The answer must include the original source link(s) or citation(s) already present in the document.  
+- The `reference` field must explicitly quote or summarize the exact part(s) of the document that were used to answer.  
+- Output strictly in JSON, nothing else.
 
-Return JSON in the following format:
-[
-  {
-    "question": "...",
-    "type": "Easy",
-    "answer": "... (Source: [link from document])"
-  }
-]
+JSON format:
+{
+  "question_type": "easy",
+  "question": "...",
+  "answer": "... (must include document’s source link)",
+  "reference": "... (the exact text or summarized info from the document that supports the answer)"
+}
+
+Document:
+<<<DOCUMENT TEXT HERE>>>
