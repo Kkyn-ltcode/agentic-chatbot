@@ -1,21 +1,15 @@
-You are a dataset creator. You are given one document.
+import re
 
-Document:
-{document_text}
-
-Task: Create exactly 1 EASY question–answer pair.
-
-Requirements:
-- The answer must be explicitly stated in the document.
-- The question should test recall of a single fact, without reasoning or inference.
-- Avoid yes/no questions. Prefer WH-questions (who, what, where, when).
-- The answer must always include the source link extracted from the document.
-
-Return JSON in the following format:
-[
-  {
-    "question": "...",
-    "type": "Easy",
-    "answer": "... (Source: [link from document])"
-  }
+text_list = [
+    "สวัสดีHelloสวัสดี",
+    "สวัสดี Helloสวัสดี",
+    "สวัสดี 123สวัสดี",
+    "สวัสดี123 สวัสดี"
 ]
+
+# Pattern: match Thai, Latin, or digits (ignore spaces and punctuation)
+pattern = r'[ก-๙]+|[A-Za-z]+|\d+'
+
+for text in text_list:
+    tokens = re.findall(pattern, text)
+    print(tokens)
