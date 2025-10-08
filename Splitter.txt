@@ -1,15 +1,1 @@
-import re
-
-text_list = [
-    "สวัสดีHelloสวัสดี",
-    "สวัสดี Helloสวัสดี",
-    "สวัสดี 123สวัสดี",
-    "สวัสดี123 สวัสดี"
-]
-
-# Pattern: match Thai, Latin, or digits (ignore spaces and punctuation)
-pattern = r'[ก-๙]+|[A-Za-z]+|\d+'
-
-for text in text_list:
-    tokens = re.findall(pattern, text)
-    print(tokens)
+https://drive.usercontent.google.com/download?id=1xZecxyjMEAocyCS5DthvNLhLvwo3b2Cf&export=download&authuser=0
