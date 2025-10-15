@@ -1,1 +1,1 @@
-https://toeicspeakingwritingvn.wordpress.com/wp-content/uploads/2016/03/collin-exam-skills-for-toeic-test-speaking-and-writing.pdf
+python -c "import torch; print('Torch:', torch.__version__, '| CUDA in torch:', torch.version.cuda); import torch_scatter; print('torch_scatter OK')"
