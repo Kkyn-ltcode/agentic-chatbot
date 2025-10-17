@@ -1,1 +1,1 @@
-python -c "import torch; print(torch.__version__); print(torch.version.cuda)"
+pip install pyg-lib -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
