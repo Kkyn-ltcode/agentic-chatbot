@@ -1,137 +1,63 @@
-# train.py
 import os
 import torch
-import torch.nn.functional as F
-from torch_geometric.loader import NeighborLoader
-from torch_geometric.nn import GraphSAGE
-from torch_geometric.data import Data
-from torch_geometric.utils import train_test_split_edges
-from torch.utils.data import random_split
-from torch.nn.parallel import DistributedDataParallel as DDP
-from tqdm import tqdm
 import torch.distributed as dist
-from torch.utils.data.distributed import DistributedSampler
-import numpy as np
-import random
+import torch.multiprocessing as mp
+from torch import nn, optim
+from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
-# ----------------------------------
-# CONFIG
-# ----------------------------------
-num_epochs = 10
-batch_size = 4096
-num_neighbors = [10, 10]
-hidden_channels = 128
-lr = 1e-3
-train_ratio = 0.7
-val_ratio = 0.15
-test_ratio = 0.15
-port = "12375"  # change if conflict
 
-# ----------------------------------
-# INIT DISTRIBUTED
-# ----------------------------------
-def setup_ddp(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = port
+def setup(rank, world_size):
+    """Initialize the distributed environment."""
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
 
-def cleanup_ddp():
+def cleanup():
+    """Cleanup the distributed environment."""
     dist.destroy_process_group()
 
 
-# ----------------------------------
-# MODEL
-# ----------------------------------
-class EdgeClassifier(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, num_classes):
-        super().__init__()
-        self.sage = GraphSAGE(in_channels, hidden_channels, hidden_channels)
-        self.lin = torch.nn.Linear(2 * hidden_channels, num_classes)
+def train(rank, world_size):
+    setup(rank, world_size)
 
-    def forward(self, x, edge_index):
-        z = self.sage(x, edge_index)
-        src, dst = edge_index
-        edge_feats = torch.cat([z[src], z[dst]], dim=-1)
-        return self.lin(edge_feats)
+    # === Dummy dataset ===
+    x = torch.randn(1000, 10)
+    y = torch.randn(1000, 1)
+    dataset = TensorDataset(x, y)
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=32, sampler=sampler)
 
+    # === Simple model ===
+    model = nn.Linear(10, 1).to(rank)
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
-# ----------------------------------
-# TRAIN LOOP
-# ----------------------------------
-def train(rank, world_size, data):
-    setup_ddp(rank, world_size)
+    criterion = nn.MSELoss()
+    optimizer = optim.SGD(model.parameters(), lr=0.01)
 
-    device = torch.device(f"cuda:{rank}")
-    data = data.to(device)
+    # === Training loop ===
+    for epoch in range(5):
+        sampler.set_epoch(epoch)
+        for batch_x, batch_y in dataloader:
+            batch_x, batch_y = batch_x.to(rank), batch_y.to(rank)
 
-    model = EdgeClassifier(
-        data.num_features, hidden_channels, num_classes=2
-    ).to(device)
-
-    model = DDP(model, device_ids=[rank])
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    # Split edges by label stratified
-    edge_labels = data.edge_label.cpu().numpy()
-    pos_idx = np.where(edge_labels == 1)[0]
-    neg_idx = np.where(edge_labels == 0)[0]
-
-    def stratified_split(pos_idx, neg_idx, ratios):
-        pos_train, pos_val, pos_test = np.split(
-            np.random.permutation(pos_idx),
-            [int(ratios[0]*len(pos_idx)), int((ratios[0]+ratios[1])*len(pos_idx))]
-        )
-        neg_train, neg_val, neg_test = np.split(
-            np.random.permutation(neg_idx),
-            [int(ratios[0]*len(neg_idx)), int((ratios[0]+ratios[1])*len(neg_idx))]
-        )
-        train_idx = np.concatenate([pos_train, neg_train])
-        val_idx = np.concatenate([pos_val, neg_val])
-        test_idx = np.concatenate([pos_test, neg_test])
-        return train_idx, val_idx, test_idx
-
-    train_idx, val_idx, test_idx = stratified_split(pos_idx, neg_idx, (train_ratio, val_ratio, test_ratio))
-    train_idx = torch.tensor(train_idx, device=device)
-    val_idx = torch.tensor(val_idx, device=device)
-    test_idx = torch.tensor(test_idx, device=device)
-
-    loader = NeighborLoader(
-        data,
-        input_nodes=None,
-        num_neighbors=num_neighbors,
-        batch_size=batch_size,
-        shuffle=True,
-    )
-
-    for epoch in range(1, num_epochs + 1):
-        model.train()
-        total_loss = 0
-        pbar = tqdm(loader, disable=(rank != 0), desc=f"Epoch {epoch}")
-
-        for batch in pbar:
-            batch = batch.to(device)
             optimizer.zero_grad()
-            out = model(batch.x, batch.edge_index)
-            loss = F.cross_entropy(out[train_idx], data.edge_label[train_idx])
+            outputs = model(batch_x)
+            loss = criterion(outputs, batch_y)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
-            pbar.set_postfix(loss=loss.item())
 
         if rank == 0:
-            print(f"Epoch {epoch:02d}, Loss: {total_loss/len(loader):.4f}")
+            print(f"Epoch [{epoch+1}/5], Loss: {loss.item():.4f}")
 
-    cleanup_ddp()
+    cleanup()
 
 
-# ----------------------------------
-# MAIN
-# ----------------------------------
-if __name__ == "__main__":
-    # Your preprocessed PyG data (from earlier step)
-    data = torch.load("graph_data.pt")  # must contain x, edge_index, edge_label
-
+def main():
     world_size = torch.cuda.device_count()
-    torch.multiprocessing.spawn(train, args=(world_size, data), nprocs=world_size, join=True)
+    mp.spawn(train, args=(world_size,), nprocs=world_size, join=True)
+
+
+if __name__ == "__main__":
+    main()
