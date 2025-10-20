@@ -253,6 +253,118 @@ class NetworkFlowTrainer:
         return avg_loss, f1_macro, f1_weighted, all_preds, all_labels
 
 
+# Data Loader Configuration for Edge Classification
+def create_edge_loaders(data, train_edge_mask, val_edge_mask, test_edge_mask, 
+                        loader_type='link_neighbor', batch_size=1024):
+    """
+    Creates appropriate data loaders for edge classification task.
+    
+    Args:
+        data: PyG Data object with x, edge_index, edge_label
+        train_edge_mask: Boolean mask for training edges
+        val_edge_mask: Boolean mask for validation edges
+        test_edge_mask: Boolean mask for test edges
+        loader_type: 'link_neighbor' (best), 'neighbor', or 'cluster'
+        batch_size: Number of edges per batch
+    
+    Returns:
+        train_loader, val_loader, test_loader
+    """
+    from torch_geometric.loader import LinkNeighborLoader, NeighborLoader, ClusterData, ClusterLoader
+    
+    if loader_type == 'link_neighbor':
+        # BEST for edge classification - specifically designed for edge-level tasks
+        print("Using LinkNeighborLoader (RECOMMENDED for edge classification)")
+        
+        train_loader = LinkNeighborLoader(
+            data,
+            num_neighbors=[15, 10, 5, 3],  # 4-hop neighborhood sampling
+            edge_label_index=data.edge_index[:, train_edge_mask],
+            edge_label=data.edge_label[train_edge_mask],
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=4,
+            persistent_workers=True,
+        )
+        
+        val_loader = LinkNeighborLoader(
+            data,
+            num_neighbors=[15, 10, 5, 3],
+            edge_label_index=data.edge_index[:, val_edge_mask],
+            edge_label=data.edge_label[val_edge_mask],
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            persistent_workers=True,
+        )
+        
+        test_loader = LinkNeighborLoader(
+            data,
+            num_neighbors=[15, 10, 5, 3],
+            edge_label_index=data.edge_index[:, test_edge_mask],
+            edge_label=data.edge_label[test_edge_mask],
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            persistent_workers=True,
+        )
+        
+    elif loader_type == 'neighbor':
+        # Alternative: Node-centric sampling (less efficient for edge tasks)
+        print("Using NeighborLoader (suboptimal for edge classification)")
+        
+        train_loader = NeighborLoader(
+            data,
+            num_neighbors=[15, 10, 5, 3],
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=4,
+            input_nodes=torch.arange(data.num_nodes),  # Sample from all nodes
+        )
+        
+        val_loader = NeighborLoader(
+            data,
+            num_neighbors=[15, 10, 5, 3],
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            input_nodes=torch.arange(data.num_nodes),
+        )
+        
+        test_loader = NeighborLoader(
+            data,
+            num_neighbors=[15, 10, 5, 3],
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            input_nodes=torch.arange(data.num_nodes),
+        )
+        
+    elif loader_type == 'cluster':
+        # Alternative: Cluster-based sampling (good for very large graphs)
+        print("Using ClusterLoader (alternative for large graphs)")
+        
+        cluster_data = ClusterData(data, num_parts=1000, recursive=False)
+        
+        train_loader = ClusterLoader(
+            cluster_data,
+            batch_size=32,  # Number of clusters per batch
+            shuffle=True,
+            num_workers=4,
+        )
+        
+        val_loader = ClusterLoader(
+            cluster_data,
+            batch_size=32,
+            shuffle=False,
+            num_workers=4,
+        )
+        
+        test_loader = val_loader  # Reuse for testing
+    
+    return train_loader, val_loader, test_loader
+
+
 # Example usage
 def main():
     """
@@ -283,29 +395,33 @@ def main():
     
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
-    # Example: Create dummy data (replace with your actual data loading)
-    # Your actual data structure should look like this:
+    # Example: Load your data
     """
+    Your data structure should look like:
+    
     data = Data(
-        x=node_features,  # [1000000, 39]
-        edge_index=edge_index,  # [2, 16000000]
-        edge_label=edge_labels,  # [num_labeled_edges] - labels for edges
-        edge_label_index=edge_label_index  # [2, num_labeled_edges] - which edges have labels
+        x=node_features,  # [1000000, 39] - node features
+        edge_index=edge_index,  # [2, 16000000] - all edges in graph
+        edge_label=edge_labels,  # [16000000] - labels for ALL edges (or subset)
     )
+    
+    # Split edges into train/val/test
+    num_edges = data.edge_index.size(1)
+    perm = torch.randperm(num_edges)
+    
+    train_edge_mask = perm[:int(0.7 * num_edges)]
+    val_edge_mask = perm[int(0.7 * num_edges):int(0.85 * num_edges)]
+    test_edge_mask = perm[int(0.85 * num_edges):]
     """
     
-    # For large graphs, use NeighborLoader for mini-batch training
-    # Example with dummy data
-    num_nodes = 1000000
-    num_edges = 16000000
-    
-    # Create example data loader (replace with actual data)
-    # loader = NeighborLoader(
-    #     data,
-    #     num_neighbors=[15, 10, 5],  # Sample neighbors per layer
-    #     batch_size=1024,
-    #     shuffle=True,
-    #     num_workers=4
+    # Create data loaders - USE LinkNeighborLoader for best results
+    # train_loader, val_loader, test_loader = create_edge_loaders(
+    #     data=data,
+    #     train_edge_mask=train_edge_mask,
+    #     val_edge_mask=val_edge_mask,
+    #     test_edge_mask=test_edge_mask,
+    #     loader_type='link_neighbor',  # BEST for edge classification
+    #     batch_size=1024
     # )
     
     # Initialize trainer
@@ -321,6 +437,8 @@ def main():
     best_f1 = 0
     
     print("\nStarting training...")
+    print("Use LinkNeighborLoader for optimal edge classification performance!")
+    
     # for epoch in range(num_epochs):
     #     train_loss, train_f1 = trainer.train_epoch(train_loader, epoch)
     #     val_loss, val_f1_macro, val_f1_weighted, _, _ = trainer.evaluate(val_loader)
