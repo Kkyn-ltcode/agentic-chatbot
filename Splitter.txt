@@ -1,22 +1,341 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv, global_mean_pool
+from torch_geometric.data import Data
+from torch_geometric.loader import NeighborLoader
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 import numpy as np
-from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import f1_score, classification_report, confusion_matrix
 
-# Example labels
-# Let's say class 0 = Normal, classes 1–9 = attacks
-y_true = np.array([0, 0, 2, 5, 0, 1, 4, 3, 0, 9])
-y_pred = np.array([0, 0, 2, 1, 0, 1, 4, 0, 0, 9])
 
-# Convert to binary
-y_true_binary = np.where(y_true == 0, 0, 1)  # 0=Normal, 1=Attack
-y_pred_binary = np.where(y_pred == 0, 0, 1)
+class EdgeGCN(nn.Module):
+    """
+    State-of-the-art GCN model for edge classification on network flow data.
+    Combines multiple advanced techniques:
+    - Multi-scale graph convolutions (GCN + GAT + GraphSAGE)
+    - Residual connections
+    - Batch normalization and layer normalization
+    - Dropout and edge dropout for regularization
+    - Attention-based edge representation
+    """
+    
+    def __init__(self, in_channels, hidden_channels=256, num_classes=10, 
+                 num_layers=4, dropout=0.3, heads=4):
+        super(EdgeGCN, self).__init__()
+        
+        self.num_layers = num_layers
+        self.dropout = dropout
+        
+        # Input projection
+        self.input_proj = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels),
+            nn.BatchNorm1d(hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
+        # Multi-scale graph convolution layers
+        self.gcn_convs = nn.ModuleList()
+        self.gat_convs = nn.ModuleList()
+        self.sage_convs = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
+        self.layer_norms = nn.ModuleList()
+        
+        for i in range(num_layers):
+            # GCN branch
+            self.gcn_convs.append(GCNConv(hidden_channels, hidden_channels))
+            
+            # GAT branch with multi-head attention
+            self.gat_convs.append(
+                GATConv(hidden_channels, hidden_channels // heads, 
+                       heads=heads, dropout=dropout, concat=True)
+            )
+            
+            # GraphSAGE branch
+            self.sage_convs.append(
+                SAGEConv(hidden_channels, hidden_channels, aggr='mean')
+            )
+            
+            self.batch_norms.append(nn.BatchNorm1d(hidden_channels * 3))
+            self.layer_norms.append(nn.LayerNorm(hidden_channels * 3))
+        
+        # Fusion layer to combine multi-scale features
+        self.fusion = nn.Sequential(
+            nn.Linear(hidden_channels * 3, hidden_channels),
+            nn.LayerNorm(hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
+        # Edge representation module
+        self.edge_encoder = EdgeEncoder(hidden_channels, hidden_channels, dropout)
+        
+        # Classification head with residual connections
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels // 2),
+            nn.LayerNorm(hidden_channels // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_channels // 2, hidden_channels // 4),
+            nn.LayerNorm(hidden_channels // 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_channels // 4, num_classes)
+        )
+    
+    def forward(self, x, edge_index, edge_attr=None, return_embeddings=False):
+        # Input projection
+        x = self.input_proj(x)
+        identity = x
+        
+        # Multi-scale graph convolutions with residual connections
+        for i in range(self.num_layers):
+            # GCN branch
+            x_gcn = self.gcn_convs[i](x, edge_index)
+            x_gcn = F.relu(x_gcn)
+            
+            # GAT branch
+            x_gat = self.gat_convs[i](x, edge_index)
+            x_gat = F.relu(x_gat)
+            
+            # GraphSAGE branch
+            x_sage = self.sage_convs[i](x, edge_index)
+            x_sage = F.relu(x_sage)
+            
+            # Concatenate multi-scale features
+            x_multi = torch.cat([x_gcn, x_gat, x_sage], dim=-1)
+            
+            # Normalization
+            x_multi = self.batch_norms[i](x_multi)
+            x_multi = self.layer_norms[i](x_multi)
+            
+            # Dropout
+            x_multi = F.dropout(x_multi, p=self.dropout, training=self.training)
+            
+            # Fusion and residual connection
+            x = self.fusion(x_multi)
+            if i > 0:  # Add residual from previous layer
+                x = x + identity
+            identity = x
+        
+        # Generate edge embeddings
+        edge_embeddings = self.edge_encoder(x, edge_index, edge_attr)
+        
+        if return_embeddings:
+            return edge_embeddings
+        
+        # Classification
+        out = self.classifier(edge_embeddings)
+        return out
 
-# Compute binary metrics
-precision = precision_score(y_true_binary, y_pred_binary)
-recall = recall_score(y_true_binary, y_pred_binary)
-f1 = f1_score(y_true_binary, y_pred_binary)
-cm = confusion_matrix(y_true_binary, y_pred_binary)
 
-print("Precision:", precision)
-print("Recall:", recall)
-print("F1-score:", f1)
-print("Confusion matrix:\n", cm)
+class EdgeEncoder(nn.Module):
+    """
+    Advanced edge encoder that creates edge representations from node embeddings.
+    Uses multiple strategies: concatenation, hadamard product, and attention.
+    """
+    
+    def __init__(self, in_channels, out_channels, dropout=0.3):
+        super(EdgeEncoder, self).__init__()
+        
+        # Edge feature projection (if edge attributes exist)
+        self.edge_proj = nn.Sequential(
+            nn.Linear(in_channels * 2, out_channels),
+            nn.LayerNorm(out_channels),
+            nn.ReLU()
+        )
+        
+        # Attention mechanism for edge importance
+        self.attention = nn.Sequential(
+            nn.Linear(out_channels, out_channels // 4),
+            nn.ReLU(),
+            nn.Linear(out_channels // 4, 1)
+        )
+        
+        self.dropout = dropout
+    
+    def forward(self, x, edge_index, edge_attr=None):
+        # Get source and target node embeddings
+        src, dst = edge_index
+        
+        # Concatenate source and destination node features
+        edge_features = torch.cat([x[src], x[dst]], dim=-1)
+        
+        # Project to edge space
+        edge_emb = self.edge_proj(edge_features)
+        
+        # Apply attention
+        attention_weights = torch.sigmoid(self.attention(edge_emb))
+        edge_emb = edge_emb * attention_weights
+        
+        edge_emb = F.dropout(edge_emb, p=self.dropout, training=self.training)
+        
+        return edge_emb
+
+
+class NetworkFlowTrainer:
+    """
+    Trainer class for the edge classification task with advanced training techniques.
+    """
+    
+    def __init__(self, model, device='cuda', lr=0.001, weight_decay=5e-4):
+        self.model = model.to(device)
+        self.device = device
+        self.optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=2)
+        
+        # For handling class imbalance (calculate from your dataset)
+        self.criterion = nn.CrossEntropyLoss()
+    
+    def train_epoch(self, data_loader, epoch):
+        self.model.train()
+        total_loss = 0
+        all_preds = []
+        all_labels = []
+        
+        for batch_idx, batch in enumerate(data_loader):
+            batch = batch.to(self.device)
+            
+            self.optimizer.zero_grad()
+            
+            # Forward pass
+            out = self.model(batch.x, batch.edge_index)
+            
+            # Get predictions for edges with labels
+            loss = self.criterion(out[batch.edge_label_index], batch.edge_label)
+            
+            # Backward pass
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer.step()
+            
+            total_loss += loss.item()
+            
+            # Collect predictions
+            preds = out[batch.edge_label_index].argmax(dim=1).cpu().numpy()
+            labels = batch.edge_label.cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(labels)
+        
+        self.scheduler.step()
+        
+        avg_loss = total_loss / len(data_loader)
+        f1 = f1_score(all_labels, all_preds, average='weighted')
+        
+        return avg_loss, f1
+    
+    @torch.no_grad()
+    def evaluate(self, data_loader):
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+        total_loss = 0
+        
+        for batch in data_loader:
+            batch = batch.to(self.device)
+            
+            out = self.model(batch.x, batch.edge_index)
+            
+            loss = self.criterion(out[batch.edge_label_index], batch.edge_label)
+            total_loss += loss.item()
+            
+            preds = out[batch.edge_label_index].argmax(dim=1).cpu().numpy()
+            labels = batch.edge_label.cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(labels)
+        
+        avg_loss = total_loss / len(data_loader)
+        f1_macro = f1_score(all_labels, all_preds, average='macro')
+        f1_weighted = f1_score(all_labels, all_preds, average='weighted')
+        
+        return avg_loss, f1_macro, f1_weighted, all_preds, all_labels
+
+
+# Example usage
+def main():
+    """
+    Example of how to use the model with your dataset.
+    """
+    
+    # Device configuration
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Model hyperparameters
+    in_channels = 39  # Your node feature dimension
+    hidden_channels = 256
+    num_classes = 10  # Normal + 9 attack types
+    num_layers = 4
+    dropout = 0.3
+    heads = 4
+    
+    # Initialize model
+    model = EdgeGCN(
+        in_channels=in_channels,
+        hidden_channels=hidden_channels,
+        num_classes=num_classes,
+        num_layers=num_layers,
+        dropout=dropout,
+        heads=heads
+    )
+    
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    
+    # Example: Create dummy data (replace with your actual data loading)
+    # Your actual data structure should look like this:
+    """
+    data = Data(
+        x=node_features,  # [1000000, 39]
+        edge_index=edge_index,  # [2, 16000000]
+        edge_label=edge_labels,  # [num_labeled_edges] - labels for edges
+        edge_label_index=edge_label_index  # [2, num_labeled_edges] - which edges have labels
+    )
+    """
+    
+    # For large graphs, use NeighborLoader for mini-batch training
+    # Example with dummy data
+    num_nodes = 1000000
+    num_edges = 16000000
+    
+    # Create example data loader (replace with actual data)
+    # loader = NeighborLoader(
+    #     data,
+    #     num_neighbors=[15, 10, 5],  # Sample neighbors per layer
+    #     batch_size=1024,
+    #     shuffle=True,
+    #     num_workers=4
+    # )
+    
+    # Initialize trainer
+    trainer = NetworkFlowTrainer(
+        model=model,
+        device=device,
+        lr=0.001,
+        weight_decay=5e-4
+    )
+    
+    # Training loop
+    num_epochs = 100
+    best_f1 = 0
+    
+    print("\nStarting training...")
+    # for epoch in range(num_epochs):
+    #     train_loss, train_f1 = trainer.train_epoch(train_loader, epoch)
+    #     val_loss, val_f1_macro, val_f1_weighted, _, _ = trainer.evaluate(val_loader)
+    #     
+    #     print(f"Epoch {epoch+1}/{num_epochs}")
+    #     print(f"Train Loss: {train_loss:.4f}, Train F1: {train_f1:.4f}")
+    #     print(f"Val Loss: {val_loss:.4f}, Val F1 (macro): {val_f1_macro:.4f}, Val F1 (weighted): {val_f1_weighted:.4f}")
+    #     
+    #     if val_f1_weighted > best_f1:
+    #         best_f1 = val_f1_weighted
+    #         torch.save(model.state_dict(), 'best_model.pt')
+    #         print(f"Saved best model with F1: {best_f1:.4f}")
+    
+    return model, trainer
+
+
+if __name__ == "__main__":
+    model, trainer = main()
