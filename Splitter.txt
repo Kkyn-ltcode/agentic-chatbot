@@ -1,1 +1,22 @@
-pip install pyg-lib -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
+import numpy as np
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+
+# Example labels
+# Let's say class 0 = Normal, classes 1–9 = attacks
+y_true = np.array([0, 0, 2, 5, 0, 1, 4, 3, 0, 9])
+y_pred = np.array([0, 0, 2, 1, 0, 1, 4, 0, 0, 9])
+
+# Convert to binary
+y_true_binary = np.where(y_true == 0, 0, 1)  # 0=Normal, 1=Attack
+y_pred_binary = np.where(y_pred == 0, 0, 1)
+
+# Compute binary metrics
+precision = precision_score(y_true_binary, y_pred_binary)
+recall = recall_score(y_true_binary, y_pred_binary)
+f1 = f1_score(y_true_binary, y_pred_binary)
+cm = confusion_matrix(y_true_binary, y_pred_binary)
+
+print("Precision:", precision)
+print("Recall:", recall)
+print("F1-score:", f1)
+print("Confusion matrix:\n", cm)
