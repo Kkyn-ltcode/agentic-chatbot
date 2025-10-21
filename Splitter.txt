@@ -1,35 +1,137 @@
+"""
+SOTA Graph Transformer for Network Attack Detection
+Optimized for 4x A10 GPUs with DDP training
+Dataset: 1M nodes, 16M edges, 39 node features, 10 classes
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import TransformerConv, LayerNorm
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+
+from torch_geometric.nn import SAGEConv, TransformerConv, LayerNorm
 from torch_geometric.loader import LinkNeighborLoader
 from torch_geometric.data import Data
+from torch_geometric.utils import degree
+
+import numpy as np
+from sklearn.metrics import f1_score, classification_report, confusion_matrix
+from collections import defaultdict
+import time
+import os
 import math
 
 
-class EdgeFeatureEncoder(nn.Module):
-    """Encode edge features from node pairs"""
+class TemporalEncoder(nn.Module):
+    """Encode temporal patterns in network flows"""
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.time_encoder = nn.Sequential(
+            nn.Linear(4, hidden_dim // 4),  # 4 temporal features
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 4, hidden_dim // 4)
+        )
+    
+    def forward(self, x, temporal_features=None):
+        """
+        Args:
+            x: Node features [N, F]
+            temporal_features: [N, 4] - time_of_day, day_of_week, duration, inter_arrival_time
+        """
+        if temporal_features is not None:
+            temporal_emb = self.time_encoder(temporal_features)
+            # Concatenate or add to features
+            return torch.cat([x, temporal_emb], dim=-1)
+        return x
+
+
+class EdgeFeatureExtractor(nn.Module):
+    """Extract rich edge features from node pairs and graph structure"""
     def __init__(self, node_dim, edge_dim, hidden_dim):
         super().__init__()
+        
+        # Edge encoder from node pairs
         self.edge_encoder = nn.Sequential(
-            nn.Linear(2 * node_dim, hidden_dim),
+            nn.Linear(2 * node_dim + 10, hidden_dim),  # +10 for structural features
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_dim, edge_dim)
         )
-    
-    def forward(self, x, edge_index):
-        # Concatenate source and target node features
+        
+    def forward(self, x, edge_index, edge_attr=None):
+        """
+        Args:
+            x: Node embeddings [N, D]
+            edge_index: [2, E]
+            edge_attr: Optional pre-computed edge features [E, F]
+        
+        Returns:
+            edge_features: [E, edge_dim]
+        """
         src, dst = edge_index
-        edge_features = torch.cat([x[src], x[dst]], dim=-1)
-        return self.edge_encoder(edge_features)
+        
+        # Concatenate source and destination features
+        edge_feats = torch.cat([x[src], x[dst]], dim=-1)
+        
+        # Add structural features
+        src_degree = degree(src, num_nodes=x.size(0))[src].unsqueeze(-1)
+        dst_degree = degree(dst, num_nodes=x.size(0))[dst].unsqueeze(-1)
+        
+        # Additional structural signals
+        degree_product = (src_degree * dst_degree).log1p()
+        degree_diff = (src_degree - dst_degree).abs()
+        degree_ratio = (src_degree / (dst_degree + 1e-8)).log1p()
+        
+        # Bidirectional edge check (approximate)
+        # In practice, pre-compute this during data preprocessing
+        structural = torch.cat([
+            src_degree.log1p(),
+            dst_degree.log1p(),
+            degree_product,
+            degree_diff,
+            degree_ratio,
+            torch.zeros(edge_feats.size(0), 5, device=edge_feats.device)  # Placeholder
+        ], dim=-1)
+        
+        # Combine all features
+        edge_feats = torch.cat([edge_feats, structural], dim=-1)
+        
+        return self.edge_encoder(edge_feats)
+
+
+class GraphSAGELayer(nn.Module):
+    """GraphSAGE layer with residual connection"""
+    def __init__(self, in_channels, out_channels, dropout=0.1):
+        super().__init__()
+        self.conv = SAGEConv(in_channels, out_channels, normalize=True, 
+                             project=True, aggr='mean')
+        self.norm = LayerNorm(out_channels)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.ReLU()
+        
+        # Residual projection if dimensions don't match
+        self.residual_proj = nn.Linear(in_channels, out_channels) if in_channels != out_channels else None
+        
+    def forward(self, x, edge_index):
+        identity = x
+        x = self.conv(x, edge_index)
+        x = self.norm(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        
+        # Residual connection
+        if self.residual_proj is not None:
+            identity = self.residual_proj(identity)
+        
+        return x + identity
 
 
 class GraphTransformerLayer(nn.Module):
-    """Single Graph Transformer layer with edge awareness"""
-    def __init__(self, in_channels, out_channels, heads=8, dropout=0.1, 
-                 edge_dim=None, use_edge_attr=True):
+    """Graph Transformer layer with edge features and virtual node"""
+    def __init__(self, in_channels, out_channels, heads=8, dropout=0.1, edge_dim=None):
         super().__init__()
         
         self.transformer_conv = TransformerConv(
@@ -37,15 +139,16 @@ class GraphTransformerLayer(nn.Module):
             out_channels=out_channels // heads,
             heads=heads,
             dropout=dropout,
-            edge_dim=edge_dim if use_edge_attr else None,
-            beta=True,  # Gating mechanism
-            root_weight=True
+            edge_dim=edge_dim,
+            beta=True,
+            root_weight=True,
+            concat=True
         )
         
         self.norm1 = LayerNorm(out_channels)
         self.norm2 = LayerNorm(out_channels)
         
-        # FFN
+        # Feed-forward network
         self.ffn = nn.Sequential(
             nn.Linear(out_channels, out_channels * 4),
             nn.GELU(),
@@ -54,75 +157,165 @@ class GraphTransformerLayer(nn.Module):
             nn.Dropout(dropout)
         )
         
-    def forward(self, x, edge_index, edge_attr=None):
-        # Multi-head attention with residual
-        x_residual = x
-        x = self.transformer_conv(x, edge_index, edge_attr=edge_attr)
+        # Residual projection
+        self.residual_proj = nn.Linear(in_channels, out_channels) if in_channels != out_channels else None
         
-        # Handle dimension mismatch for first layer
-        if x_residual.size(-1) != x.size(-1):
-            x_residual = F.pad(x_residual, (0, x.size(-1) - x_residual.size(-1)))
+    def forward(self, x, edge_index, edge_attr=None, return_attention=False):
+        identity = x
         
-        x = self.norm1(x + x_residual)
+        # Multi-head attention
+        if return_attention:
+            x, attn = self.transformer_conv(x, edge_index, edge_attr=edge_attr, 
+                                           return_attention_weights=True)
+        else:
+            x = self.transformer_conv(x, edge_index, edge_attr=edge_attr)
+            attn = None
+        
+        # Residual connection
+        if self.residual_proj is not None:
+            identity = self.residual_proj(identity)
+        
+        x = self.norm1(x + identity)
         
         # FFN with residual
         x = self.norm2(x + self.ffn(x))
         
+        if return_attention:
+            return x, attn
         return x
 
 
-class SOTAGraphTransformer(nn.Module):
-    """
-    State-of-the-art Graph Transformer for Edge Classification
+class MultiHeadEdgeClassifier(nn.Module):
+    """Multi-task edge classifier with three heads"""
+    def __init__(self, hidden_dim, num_classes=10):
+        super().__init__()
+        
+        # Shared feature extractor
+        self.shared = nn.Sequential(
+            nn.Linear(hidden_dim * 4, hidden_dim * 2),
+            nn.LayerNorm(hidden_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        
+        # Head 1: Binary classification (Normal vs Attack)
+        self.binary_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, 2)
+        )
+        
+        # Head 2: Multi-class classification (10 classes)
+        self.multiclass_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, num_classes)
+        )
+        
+        # Head 3: Severity score (regression)
+        self.severity_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 4, 1),
+            nn.Sigmoid()  # Output between 0-1
+        )
     
-    Features:
-    - Multi-head attention with edge features
-    - Residual connections and layer normalization
-    - Virtual node for global information
-    - Edge-level predictions with advanced aggregation
+    def forward(self, edge_repr):
+        """
+        Args:
+            edge_repr: [E, hidden_dim * 4]
+        
+        Returns:
+            binary_logits: [E, 2]
+            multiclass_logits: [E, num_classes]
+            severity_scores: [E, 1]
+        """
+        shared_features = self.shared(edge_repr)
+        
+        binary_logits = self.binary_head(shared_features)
+        multiclass_logits = self.multiclass_head(shared_features)
+        severity_scores = self.severity_head(shared_features)
+        
+        return binary_logits, multiclass_logits, severity_scores
+
+
+class SOTANetworkAttackDetector(nn.Module):
+    """
+    State-of-the-art Graph Transformer for Network Attack Detection
+    
+    Architecture:
+    - Temporal encoding
+    - 2x GraphSAGE layers (local aggregation)
+    - 4x Graph Transformer layers (global patterns)
+    - Multi-head edge classifier
     """
     def __init__(
         self,
         num_node_features=39,
-        hidden_dim=256,
-        num_layers=6,
+        hidden_dim=512,
+        num_graphsage_layers=2,
+        num_transformer_layers=4,
         num_heads=8,
         num_classes=10,
-        dropout=0.1,
-        use_virtual_node=True
+        dropout=0.15,
+        use_virtual_node=True,
+        use_temporal=False
     ):
         super().__init__()
         
-        self.num_layers = num_layers
+        self.num_classes = num_classes
         self.hidden_dim = hidden_dim
         self.use_virtual_node = use_virtual_node
+        self.use_temporal = use_temporal
+        
+        # Temporal encoder (optional)
+        if use_temporal:
+            self.temporal_encoder = TemporalEncoder(hidden_dim)
+            input_dim = num_node_features + hidden_dim // 4
+        else:
+            input_dim = num_node_features
         
         # Input projection
         self.node_encoder = nn.Sequential(
-            nn.Linear(num_node_features, hidden_dim),
+            nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
         
-        # Edge feature encoder
+        # Edge feature extractor
         edge_dim = hidden_dim // 2
-        self.edge_feature_encoder = EdgeFeatureEncoder(
+        self.edge_feature_extractor = EdgeFeatureExtractor(
             hidden_dim, edge_dim, hidden_dim
         )
         
-        # Virtual node (for global information)
+        # Virtual node for global context
         if use_virtual_node:
             self.virtual_node_embedding = nn.Embedding(1, hidden_dim)
-            self.virtual_node_mlp = nn.ModuleList([
+            self.virtual_mlp_list = nn.ModuleList([
                 nn.Sequential(
                     nn.Linear(hidden_dim, hidden_dim * 2),
                     nn.BatchNorm1d(hidden_dim * 2),
                     nn.ReLU(),
                     nn.Dropout(dropout),
                     nn.Linear(hidden_dim * 2, hidden_dim)
-                ) for _ in range(num_layers)
+                ) for _ in range(num_graphsage_layers + num_transformer_layers)
             ])
+        
+        # GraphSAGE layers
+        self.graphsage_layers = nn.ModuleList([
+            GraphSAGELayer(
+                hidden_dim if i > 0 else hidden_dim,
+                hidden_dim,
+                dropout=dropout
+            ) for i in range(num_graphsage_layers)
+        ])
         
         # Graph Transformer layers
         self.transformer_layers = nn.ModuleList([
@@ -131,23 +324,12 @@ class SOTAGraphTransformer(nn.Module):
                 out_channels=hidden_dim,
                 heads=num_heads,
                 dropout=dropout,
-                edge_dim=edge_dim,
-                use_edge_attr=True
-            ) for _ in range(num_layers)
+                edge_dim=edge_dim
+            ) for _ in range(num_transformer_layers)
         ])
         
-        # Edge classification head
-        self.edge_classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 3 + edge_dim, hidden_dim * 2),
-            nn.LayerNorm(hidden_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes)
-        )
+        # Multi-head edge classifier
+        self.edge_classifier = MultiHeadEdgeClassifier(hidden_dim, num_classes)
         
         self._reset_parameters()
     
@@ -157,126 +339,185 @@ class SOTAGraphTransformer(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(m.weight, std=0.02)
     
-    def forward(self, x, edge_index, edge_label_index=None, batch=None):
+    def forward(self, x, edge_index, edge_label_index=None, 
+                batch=None, temporal_features=None, return_attention=False):
         """
         Args:
-            x: Node features [num_nodes, num_node_features]
-            edge_index: Edge connectivity [2, num_edges]
-            edge_label_index: Edges to predict [2, num_target_edges]
-            batch: Batch vector [num_nodes] (for batched graphs)
-        
-        Returns:
-            edge_logits: Edge predictions [num_target_edges, num_classes]
+            x: Node features [N, num_node_features]
+            edge_index: Edge connectivity [2, E]
+            edge_label_index: Edges to predict [2, E_target]
+            batch: Batch assignment [N]
+            temporal_features: Temporal info [N, 4]
+            return_attention: Whether to return attention weights
         """
+        # Encode temporal features
+        if self.use_temporal and temporal_features is not None:
+            x = self.temporal_encoder(x, temporal_features)
+        
         # Encode nodes
         x = self.node_encoder(x)
         
-        # Encode edge features from node pairs
-        edge_attr = self.edge_feature_encoder(x, edge_index)
+        # Extract edge features
+        edge_attr = self.edge_feature_extractor(x, edge_index)
         
-        # Virtual node setup
+        # Initialize virtual node
         if self.use_virtual_node:
-            virtual_node = self.virtual_node_embedding(
-                torch.zeros(1, dtype=torch.long, device=x.device)
-            )
             if batch is None:
                 batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+            
+            virtual_node = self.virtual_node_embedding(
+                torch.zeros(batch.max().item() + 1, dtype=torch.long, device=x.device)
+            )
         
-        # Apply transformer layers
-        for i, layer in enumerate(self.transformer_layers):
-            # Virtual node update
+        layer_idx = 0
+        
+        # GraphSAGE layers
+        for sage_layer in self.graphsage_layers:
+            # Virtual node aggregation
             if self.use_virtual_node:
-                # Aggregate node features to virtual node
-                virtual_node_input = torch.zeros_like(virtual_node)
-                virtual_node_input = virtual_node_input.index_add_(
-                    0, batch, x
-                ) / (batch.bincount().float().unsqueeze(-1) + 1e-8)
+                # Aggregate to virtual node
+                vn_temp = torch.zeros_like(virtual_node)
+                vn_temp = vn_temp.index_add_(0, batch, x)
+                vn_temp = vn_temp / (batch.bincount().float().unsqueeze(-1) + 1e-8)
+                virtual_node = virtual_node + self.virtual_mlp_list[layer_idx](vn_temp)
                 
-                virtual_node = virtual_node + self.virtual_node_mlp[i](
-                    virtual_node_input
-                )
-                
-                # Broadcast virtual node to all nodes
+                # Broadcast to nodes
                 x = x + virtual_node[batch]
             
-            # Apply transformer layer
-            x = layer(x, edge_index, edge_attr)
+            x = sage_layer(x, edge_index)
+            layer_idx += 1
+        
+        # Graph Transformer layers
+        attention_weights = []
+        for transformer_layer in self.transformer_layers:
+            # Virtual node update
+            if self.use_virtual_node:
+                vn_temp = torch.zeros_like(virtual_node)
+                vn_temp = vn_temp.index_add_(0, batch, x)
+                vn_temp = vn_temp / (batch.bincount().float().unsqueeze(-1) + 1e-8)
+                virtual_node = virtual_node + self.virtual_mlp_list[layer_idx](vn_temp)
+                x = x + virtual_node[batch]
+            
+            if return_attention:
+                x, attn = transformer_layer(x, edge_index, edge_attr, return_attention=True)
+                attention_weights.append(attn)
+            else:
+                x = transformer_layer(x, edge_index, edge_attr)
+            
+            layer_idx += 1
         
         # Edge classification
         if edge_label_index is None:
             edge_label_index = edge_index
         
-        # Get features for edge endpoints
-        src_idx, dst_idx = edge_label_index
-        src_features = x[src_idx]
-        dst_features = x[dst_idx]
+        src, dst = edge_label_index
         
-        # Compute edge features for target edges
-        edge_features = self.edge_feature_encoder(x, edge_label_index)
+        # Extract edge features for target edges
+        target_edge_attr = self.edge_feature_extractor(x, edge_label_index)
         
-        # Combine features: [src || dst || src*dst || edge_features]
+        # Construct edge representation: [src || dst || src*dst || edge_attr]
         edge_repr = torch.cat([
-            src_features,
-            dst_features,
-            src_features * dst_features,  # Interaction term
-            edge_features
+            x[src],
+            x[dst],
+            x[src] * x[dst],
+            target_edge_attr
         ], dim=-1)
         
-        # Classify edges
-        edge_logits = self.edge_classifier(edge_repr)
+        # Multi-head classification
+        binary_logits, multiclass_logits, severity_scores = self.edge_classifier(edge_repr)
         
-        return edge_logits
+        if return_attention:
+            return binary_logits, multiclass_logits, severity_scores, attention_weights
+        
+        return binary_logits, multiclass_logits, severity_scores
 
 
-class NetworkAttackDetector:
+class FocalLoss(nn.Module):
+    """Focal Loss for handling class imbalance"""
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        super().__init__()
+        self.alpha = alpha  # Class weights
+        self.gamma = gamma
+        self.reduction = reduction
+    
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, weight=self.alpha, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        return focal_loss
+
+
+class DistributedNetworkAttackTrainer:
     """
-    Wrapper class for training and inference
+    Multi-GPU trainer with DDP for 4x A10 GPUs
     """
     def __init__(
         self,
-        num_node_features=39,
-        hidden_dim=256,
-        num_layers=6,
-        num_heads=8,
+        model,
         num_classes=10,
-        dropout=0.1,
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        class_weights=None,
+        device='cuda',
+        rank=0,
+        world_size=4
     ):
         self.device = device
-        self.model = SOTAGraphTransformer(
-            num_node_features=num_node_features,
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            num_heads=num_heads,
-            num_classes=num_classes,
-            dropout=dropout
-        ).to(device)
-        
+        self.rank = rank
+        self.world_size = world_size
         self.num_classes = num_classes
+        
+        # Move model to device and wrap with DDP
+        self.model = model.to(device)
+        if world_size > 1:
+            self.model = DDP(self.model, device_ids=[rank], 
+                           find_unused_parameters=False)
+        
+        # Loss functions
+        if class_weights is not None:
+            class_weights = torch.FloatTensor(class_weights).to(device)
+        
+        self.binary_criterion = nn.CrossEntropyLoss()
+        self.multiclass_criterion = FocalLoss(alpha=class_weights, gamma=2.0)
+        self.severity_criterion = nn.MSELoss()
+        
+    def setup_distributed(self):
+        """Initialize distributed training"""
+        if self.world_size > 1:
+            dist.init_process_group(
+                backend='nccl',
+                init_method='env://',
+                world_size=self.world_size,
+                rank=self.rank
+            )
+    
+    def cleanup_distributed(self):
+        """Cleanup distributed training"""
+        if self.world_size > 1:
+            dist.destroy_process_group()
     
     def create_dataloader(
         self,
         data,
         edge_label_index,
         edge_label,
-        batch_size=1024,
-        num_neighbors=[15, 10, 5],
+        batch_size=2048,
+        num_neighbors=[20, 15, 10, 8, 6, 4],
         shuffle=True,
         num_workers=4
     ):
         """
-        Create LinkNeighborLoader for edge classification
-        
-        Args:
-            data: PyG Data object with x, edge_index
-            edge_label_index: Edges to predict [2, num_edges]
-            edge_label: Labels for edges [num_edges]
-            batch_size: Number of edges per batch
-            num_neighbors: Number of neighbors to sample per layer
-            shuffle: Whether to shuffle
-            num_workers: Number of data loading workers
+        Create distributed LinkNeighborLoader
         """
+        # For distributed training, use DistributedSampler approach
+        # PyG's LinkNeighborLoader handles this internally when using multiple workers
+        
         loader = LinkNeighborLoader(
             data,
             num_neighbors=num_neighbors,
@@ -288,74 +529,156 @@ class NetworkAttackDetector:
             persistent_workers=True if num_workers > 0 else False,
             pin_memory=True
         )
+        
         return loader
     
-    def train_epoch(self, loader, optimizer, criterion):
-        """Train for one epoch"""
+    def train_epoch(self, loader, optimizer, scaler, epoch):
+        """Train one epoch with mixed precision"""
         self.model.train()
+        
         total_loss = 0
-        total_correct = 0
+        total_binary_correct = 0
+        total_multiclass_correct = 0
         total_samples = 0
         
-        for batch in loader:
+        all_preds = []
+        all_labels = []
+        
+        if self.rank == 0:
+            print(f"\n=== Epoch {epoch} ===")
+        
+        for batch_idx, batch in enumerate(loader):
             batch = batch.to(self.device)
+            
             optimizer.zero_grad()
             
-            # Forward pass
-            logits = self.model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_label_index,
-                batch.batch if hasattr(batch, 'batch') else None
-            )
+            # Mixed precision forward pass
+            with torch.cuda.amp.autocast():
+                binary_logits, multiclass_logits, severity_scores = self.model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.edge_label_index,
+                    batch.batch if hasattr(batch, 'batch') else None
+                )
+                
+                # Compute binary labels (0=normal, 1=attack)
+                binary_labels = (batch.edge_label > 0).long()
+                
+                # Multi-task loss
+                binary_loss = self.binary_criterion(binary_logits, binary_labels)
+                multiclass_loss = self.multiclass_criterion(multiclass_logits, batch.edge_label)
+                
+                # Severity: normalize labels to [0, 1]
+                severity_targets = (batch.edge_label.float() / (self.num_classes - 1)).unsqueeze(-1)
+                severity_loss = self.severity_criterion(severity_scores, severity_targets)
+                
+                # Combined loss
+                loss = binary_loss + 2.0 * multiclass_loss + 0.5 * severity_loss
             
-            # Compute loss
-            loss = criterion(logits, batch.edge_label)
-            
-            # Backward pass
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            optimizer.step()
+            # Backward pass with gradient scaling
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
             
             # Metrics
-            total_loss += loss.item() * logits.size(0)
-            pred = logits.argmax(dim=-1)
-            total_correct += (pred == batch.edge_label).sum().item()
-            total_samples += logits.size(0)
+            with torch.no_grad():
+                total_loss += loss.item() * batch.edge_label.size(0)
+                
+                binary_pred = binary_logits.argmax(dim=-1)
+                total_binary_correct += (binary_pred == binary_labels).sum().item()
+                
+                multiclass_pred = multiclass_logits.argmax(dim=-1)
+                total_multiclass_correct += (multiclass_pred == batch.edge_label).sum().item()
+                
+                total_samples += batch.edge_label.size(0)
+                
+                all_preds.append(multiclass_pred.cpu())
+                all_labels.append(batch.edge_label.cpu())
+            
+            # Log progress
+            if self.rank == 0 and batch_idx % 50 == 0:
+                print(f"Batch {batch_idx}/{len(loader)}: Loss={loss.item():.4f}, "
+                      f"Binary Acc={total_binary_correct/total_samples:.4f}, "
+                      f"Multi Acc={total_multiclass_correct/total_samples:.4f}")
         
-        return total_loss / total_samples, total_correct / total_samples
+        avg_loss = total_loss / total_samples
+        binary_acc = total_binary_correct / total_samples
+        multiclass_acc = total_multiclass_correct / total_samples
+        
+        all_preds = torch.cat(all_preds).numpy()
+        all_labels = torch.cat(all_labels).numpy()
+        
+        return avg_loss, binary_acc, multiclass_acc, all_preds, all_labels
     
     @torch.no_grad()
     def evaluate(self, loader):
         """Evaluate the model"""
         self.model.eval()
-        total_correct = 0
+        
+        total_binary_correct = 0
+        total_multiclass_correct = 0
         total_samples = 0
+        
         all_preds = []
         all_labels = []
+        all_binary_preds = []
+        all_binary_labels = []
         
         for batch in loader:
             batch = batch.to(self.device)
             
-            logits = self.model(
-                batch.x,
-                batch.edge_index,
-                batch.edge_label_index,
-                batch.batch if hasattr(batch, 'batch') else None
-            )
+            with torch.cuda.amp.autocast():
+                binary_logits, multiclass_logits, severity_scores = self.model(
+                    batch.x,
+                    batch.edge_index,
+                    batch.edge_label_index,
+                    batch.batch if hasattr(batch, 'batch') else None
+                )
             
-            pred = logits.argmax(dim=-1)
-            total_correct += (pred == batch.edge_label).sum().item()
-            total_samples += logits.size(0)
+            binary_labels = (batch.edge_label > 0).long()
             
-            all_preds.append(pred.cpu())
+            binary_pred = binary_logits.argmax(dim=-1)
+            multiclass_pred = multiclass_logits.argmax(dim=-1)
+            
+            total_binary_correct += (binary_pred == binary_labels).sum().item()
+            total_multiclass_correct += (multiclass_pred == batch.edge_label).sum().item()
+            total_samples += batch.edge_label.size(0)
+            
+            all_preds.append(multiclass_pred.cpu())
             all_labels.append(batch.edge_label.cpu())
+            all_binary_preds.append(binary_pred.cpu())
+            all_binary_labels.append(binary_labels.cpu())
         
-        accuracy = total_correct / total_samples
-        all_preds = torch.cat(all_preds)
-        all_labels = torch.cat(all_labels)
+        binary_acc = total_binary_correct / total_samples
+        multiclass_acc = total_multiclass_correct / total_samples
         
-        return accuracy, all_preds, all_labels
+        all_preds = torch.cat(all_preds).numpy()
+        all_labels = torch.cat(all_labels).numpy()
+        all_binary_preds = torch.cat(all_binary_preds).numpy()
+        all_binary_labels = torch.cat(all_binary_labels).numpy()
+        
+        # Compute F1 scores
+        macro_f1 = f1_score(all_labels, all_preds, average='macro')
+        per_class_f1 = f1_score(all_labels, all_preds, average=None)
+        
+        # Attack detection rate (recall for attack classes)
+        attack_mask = all_labels > 0
+        if attack_mask.sum() > 0:
+            attack_detection_rate = (all_preds[attack_mask] == all_labels[attack_mask]).mean()
+        else:
+            attack_detection_rate = 0.0
+        
+        return {
+            'binary_acc': binary_acc,
+            'multiclass_acc': multiclass_acc,
+            'macro_f1': macro_f1,
+            'per_class_f1': per_class_f1,
+            'attack_detection_rate': attack_detection_rate,
+            'predictions': all_preds,
+            'labels': all_labels
+        }
     
     def fit(
         self,
@@ -364,114 +687,596 @@ class NetworkAttackDetector:
         num_epochs=100,
         lr=1e-3,
         weight_decay=1e-5,
-        patience=10
+        warmup_epochs=5,
+        patience=15
     ):
         """
-        Train the model with early stopping
+        Train with learning rate warmup, mixed precision, and early stopping
         """
+        # Optimizer
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=lr,
-            weight_decay=weight_decay
+            weight_decay=weight_decay,
+            betas=(0.9, 0.999)
         )
         
-        # Learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=5, verbose=True
-        )
+        # Learning rate scheduler with warmup
+        def lr_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            else:
+                return 0.5 * (1 + math.cos(math.pi * (epoch - warmup_epochs) / (num_epochs - warmup_epochs)))
         
-        # Class weights for imbalanced dataset
-        criterion = nn.CrossEntropyLoss()
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         
-        best_val_acc = 0
+        # Gradient scaler for mixed precision
+        scaler = torch.cuda.amp.GradScaler()
+        
+        best_val_f1 = 0
         patience_counter = 0
         
         for epoch in range(num_epochs):
+            start_time = time.time()
+            
             # Train
-            train_loss, train_acc = self.train_epoch(
-                train_loader, optimizer, criterion
+            train_loss, train_binary_acc, train_multi_acc, _, _ = self.train_epoch(
+                train_loader, optimizer, scaler, epoch
             )
             
             # Validate
-            val_acc, _, _ = self.evaluate(val_loader)
+            val_metrics = self.evaluate(val_loader)
             
-            # Scheduler step
-            scheduler.step(val_acc)
+            # Learning rate step
+            scheduler.step()
             
-            print(f'Epoch {epoch+1}/{num_epochs}:')
-            print(f'  Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}')
-            print(f'  Val Acc: {val_acc:.4f}')
+            epoch_time = time.time() - start_time
             
-            # Early stopping
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
+            if self.rank == 0:
+                print(f"\n=== Epoch {epoch + 1}/{num_epochs} Summary ===")
+                print(f"Time: {epoch_time:.2f}s")
+                print(f"Train - Loss: {train_loss:.4f}, Binary Acc: {train_binary_acc:.4f}, Multi Acc: {train_multi_acc:.4f}")
+                print(f"Val - Binary Acc: {val_metrics['binary_acc']:.4f}, Multi Acc: {val_metrics['multiclass_acc']:.4f}")
+                print(f"Val - Macro F1: {val_metrics['macro_f1']:.4f}, Attack Detection: {val_metrics['attack_detection_rate']:.4f}")
+                print(f"LR: {scheduler.get_last_lr()[0]:.6f}")
+            
+            # Early stopping based on macro F1
+            if val_metrics['macro_f1'] > best_val_f1:
+                best_val_f1 = val_metrics['macro_f1']
                 patience_counter = 0
-                # Save best model
-                torch.save(self.model.state_dict(), 'best_model.pt')
+                
+                if self.rank == 0:
+                    # Save best model
+                    model_to_save = self.model.module if hasattr(self.model, 'module') else self.model
+                    torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': model_to_save.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'val_f1': best_val_f1,
+                        'val_metrics': val_metrics
+                    }, 'best_model_checkpoint.pt')
+                    print(f"✓ Saved new best model (F1: {best_val_f1:.4f})")
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
-                    print(f'Early stopping at epoch {epoch+1}')
+                    if self.rank == 0:
+                        print(f"\nEarly stopping triggered at epoch {epoch + 1}")
                     break
         
-        # Load best model
-        self.model.load_state_dict(torch.load('best_model.pt'))
-        print(f'Best validation accuracy: {best_val_acc:.4f}')
+        if self.rank == 0:
+            print(f"\n=== Training Complete ===")
+            print(f"Best Validation Macro F1: {best_val_f1:.4f}")
+            
+            # Load best model
+            checkpoint = torch.load('best_model_checkpoint.pt')
+            model_to_load = self.model.module if hasattr(self.model, 'module') else self.model
+            model_to_load.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Print detailed metrics
+            best_metrics = checkpoint['val_metrics']
+            print("\nPer-class F1 scores:")
+            for i, f1 in enumerate(best_metrics['per_class_f1']):
+                print(f"  Class {i}: {f1:.4f}")
         
-        return best_val_acc
+        return best_val_f1
 
 
-# Example usage
-if __name__ == '__main__':
-    # Create dummy data (replace with your actual data)
-    num_nodes = 1000
-    num_edges = 5000
-    num_node_features = 39
-    num_classes = 10
+def main_worker(rank, world_size, data_dict):
+    """
+    Main worker function for each GPU
     
-    # Create a sample graph
-    x = torch.randn(num_nodes, num_node_features)
-    edge_index = torch.randint(0, num_nodes, (2, num_edges))
+    Args:
+        rank: GPU rank (0-3 for 4 GPUs)
+        world_size: Total number of GPUs (4)
+        data_dict: Dictionary containing data and training config
+    """
+    print(f"Initializing GPU {rank}/{world_size}")
     
-    # Split edges for train/val/test
-    num_train = int(0.7 * num_edges)
-    num_val = int(0.15 * num_edges)
+    # Set device
+    torch.cuda.set_device(rank)
+    device = torch.device(f'cuda:{rank}')
     
-    perm = torch.randperm(num_edges)
-    train_edge_idx = perm[:num_train]
-    val_edge_idx = perm[num_train:num_train+num_val]
-    test_edge_idx = perm[num_train+num_val:]
+    # Initialize distributed training
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
     
-    train_edge_label_index = edge_index[:, train_edge_idx]
-    train_edge_label = torch.randint(0, num_classes, (num_train,))
+    if world_size > 1:
+        dist.init_process_group(
+            backend='nccl',
+            init_method='env://',
+            world_size=world_size,
+            rank=rank
+        )
     
-    val_edge_label_index = edge_index[:, val_edge_idx]
-    val_edge_label = torch.randint(0, num_classes, (num_val,))
+    # Extract data
+    data = data_dict['data']
+    train_edge_index = data_dict['train_edge_index']
+    train_edge_label = data_dict['train_edge_label']
+    val_edge_index = data_dict['val_edge_index']
+    val_edge_label = data_dict['val_edge_label']
+    config = data_dict['config']
     
-    # Create data object
-    data = Data(x=x, edge_index=edge_index)
+    # Create model
+    model = SOTANetworkAttackDetector(
+        num_node_features=config['num_node_features'],
+        hidden_dim=config['hidden_dim'],
+        num_graphsage_layers=config['num_graphsage_layers'],
+        num_transformer_layers=config['num_transformer_layers'],
+        num_heads=config['num_heads'],
+        num_classes=config['num_classes'],
+        dropout=config['dropout'],
+        use_virtual_node=config['use_virtual_node'],
+        use_temporal=config['use_temporal']
+    )
     
-    # Initialize detector
-    detector = NetworkAttackDetector(
-        num_node_features=39,
-        hidden_dim=256,
-        num_layers=6,
-        num_heads=8,
-        num_classes=10,
-        dropout=0.1
+    if rank == 0:
+        # Count parameters
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"\nModel Statistics:")
+        print(f"  Total parameters: {total_params:,}")
+        print(f"  Trainable parameters: {trainable_params:,}")
+        print(f"  Model size: ~{total_params * 4 / 1024 / 1024:.2f} MB")
+    
+    # Create trainer
+    trainer = DistributedNetworkAttackTrainer(
+        model=model,
+        num_classes=config['num_classes'],
+        class_weights=config.get('class_weights', None),
+        device=device,
+        rank=rank,
+        world_size=world_size
     )
     
     # Create dataloaders
-    train_loader = detector.create_dataloader(
-        data, train_edge_label_index, train_edge_label,
-        batch_size=1024, num_neighbors=[15, 10, 5], shuffle=True
+    train_loader = trainer.create_dataloader(
+        data=data,
+        edge_label_index=train_edge_index,
+        edge_label=train_edge_label,
+        batch_size=config['batch_size'],
+        num_neighbors=config['num_neighbors'],
+        shuffle=True,
+        num_workers=config['num_workers']
     )
     
-    val_loader = detector.create_dataloader(
-        data, val_edge_label_index, val_edge_label,
-        batch_size=1024, num_neighbors=[15, 10, 5], shuffle=False
+    val_loader = trainer.create_dataloader(
+        data=data,
+        edge_label_index=val_edge_index,
+        edge_label=val_edge_label,
+        batch_size=config['batch_size'],
+        num_neighbors=config['num_neighbors'],
+        shuffle=False,
+        num_workers=config['num_workers']
     )
+    
+    if rank == 0:
+        print(f"\nDataloader Statistics:")
+        print(f"  Training edges: {train_edge_label.size(0):,}")
+        print(f"  Validation edges: {val_edge_label.size(0):,}")
+        print(f"  Batch size: {config['batch_size']}")
+        print(f"  Num workers per GPU: {config['num_workers']}")
     
     # Train model
-    print("Starting training...")
-    detector.fit(train_loader, val_loader, num_epochs=50, lr=1e-3)
+    best_f1 = trainer.fit(
+        train_loader=train_loader,
+        val_loader=val_loader,
+        num_epochs=config['num_epochs'],
+        lr=config['learning_rate'],
+        weight_decay=config['weight_decay'],
+        warmup_epochs=config['warmup_epochs'],
+        patience=config['patience']
+    )
+    
+    # Cleanup
+    if world_size > 1:
+        dist.destroy_process_group()
+    
+    return best_f1
+
+
+def compute_class_weights(edge_labels, num_classes=10):
+    """
+    Compute class weights for imbalanced dataset
+    Uses inverse frequency weighting
+    """
+    class_counts = torch.bincount(edge_labels, minlength=num_classes).float()
+    total_samples = edge_labels.size(0)
+    
+    # Inverse frequency
+    class_weights = total_samples / (num_classes * class_counts + 1e-8)
+    
+    # Normalize so that weights sum to num_classes
+    class_weights = class_weights / class_weights.sum() * num_classes
+    
+    return class_weights
+
+
+def prepare_data(
+    num_nodes=1000000,
+    num_edges=16000000,
+    num_node_features=39,
+    num_classes=10,
+    train_ratio=0.7,
+    val_ratio=0.15
+):
+    """
+    Prepare data for training
+    
+    For real usage, replace this with your actual data loading
+    """
+    print("Preparing data...")
+    print(f"  Nodes: {num_nodes:,}")
+    print(f"  Edges: {num_edges:,}")
+    print(f"  Node features: {num_node_features}")
+    print(f"  Classes: {num_classes}")
+    
+    # Create dummy data (REPLACE WITH YOUR ACTUAL DATA)
+    # For demonstration with smaller dataset
+    demo_nodes = min(num_nodes, 50000)
+    demo_edges = min(num_edges, 200000)
+    
+    print(f"\nUsing demo subset for testing:")
+    print(f"  Demo nodes: {demo_nodes:,}")
+    print(f"  Demo edges: {demo_edges:,}")
+    
+    # Node features
+    x = torch.randn(demo_nodes, num_node_features)
+    
+    # Edge index (ensure no self-loops and valid indices)
+    edge_index = torch.randint(0, demo_nodes, (2, demo_edges))
+    # Remove self-loops
+    mask = edge_index[0] != edge_index[1]
+    edge_index = edge_index[:, mask]
+    
+    # Edge labels with realistic class distribution
+    # Simulate imbalanced network traffic: 90% normal, 10% attacks
+    edge_labels = torch.zeros(edge_index.size(1), dtype=torch.long)
+    
+    # 10% attacks distributed among 9 attack types
+    num_attacks = int(0.1 * edge_index.size(1))
+    attack_indices = torch.randperm(edge_index.size(1))[:num_attacks]
+    edge_labels[attack_indices] = torch.randint(1, num_classes, (num_attacks,))
+    
+    print(f"\nClass distribution:")
+    for i in range(num_classes):
+        count = (edge_labels == i).sum().item()
+        print(f"  Class {i}: {count:,} ({count/edge_index.size(1)*100:.2f}%)")
+    
+    # Create PyG Data object
+    data = Data(x=x, edge_index=edge_index)
+    
+    # Split edges for train/val/test
+    num_total_edges = edge_index.size(1)
+    num_train = int(train_ratio * num_total_edges)
+    num_val = int(val_ratio * num_total_edges)
+    
+    perm = torch.randperm(num_total_edges)
+    train_idx = perm[:num_train]
+    val_idx = perm[num_train:num_train + num_val]
+    test_idx = perm[num_train + num_val:]
+    
+    train_edge_index = edge_index[:, train_idx]
+    train_edge_label = edge_labels[train_idx]
+    
+    val_edge_index = edge_index[:, val_idx]
+    val_edge_label = edge_labels[val_idx]
+    
+    test_edge_index = edge_index[:, test_idx]
+    test_edge_label = edge_labels[test_idx]
+    
+    # Compute class weights
+    class_weights = compute_class_weights(train_edge_label, num_classes)
+    
+    print(f"\nClass weights for focal loss:")
+    for i, w in enumerate(class_weights):
+        print(f"  Class {i}: {w:.4f}")
+    
+    return {
+        'data': data,
+        'train_edge_index': train_edge_index,
+        'train_edge_label': train_edge_label,
+        'val_edge_index': val_edge_index,
+        'val_edge_label': val_edge_label,
+        'test_edge_index': test_edge_index,
+        'test_edge_label': test_edge_label,
+        'class_weights': class_weights
+    }
+
+
+def load_real_data(data_path):
+    """
+    Load your actual network flow dataset
+    
+    Expected format:
+    - Node features: [N, 39] numpy array or tensor
+    - Edge index: [2, E] edge list
+    - Edge labels: [E] labels (0=normal, 1-9=attack types)
+    - Optional: Temporal features, edge attributes, etc.
+    
+    Args:
+        data_path: Path to your dataset
+    
+    Returns:
+        Dictionary with data splits
+    """
+    # TODO: Implement your data loading logic
+    # Example:
+    # import pickle
+    # with open(data_path, 'rb') as f:
+    #     data_dict = pickle.load(f)
+    # 
+    # x = torch.FloatTensor(data_dict['node_features'])
+    # edge_index = torch.LongTensor(data_dict['edge_index'])
+    # edge_labels = torch.LongTensor(data_dict['edge_labels'])
+    # 
+    # ... split into train/val/test ...
+    
+    raise NotImplementedError("Please implement your data loading logic")
+
+
+def main():
+    """
+    Main training script for 4x A10 GPUs
+    """
+    print("=" * 80)
+    print("SOTA Network Attack Detection with Graph Transformers")
+    print("Multi-GPU Training with PyTorch DDP")
+    print("=" * 80)
+    
+    # Configuration
+    config = {
+        # Model architecture
+        'num_node_features': 39,
+        'hidden_dim': 512,
+        'num_graphsage_layers': 2,
+        'num_transformer_layers': 4,
+        'num_heads': 8,
+        'num_classes': 10,
+        'dropout': 0.15,
+        'use_virtual_node': True,
+        'use_temporal': False,  # Set to True if you have temporal features
+        
+        # Training hyperparameters
+        'batch_size': 2048,  # Edges per batch per GPU
+        'num_neighbors': [20, 15, 10, 8, 6, 4],  # Neighbor sampling for 6 layers
+        'num_epochs': 100,
+        'learning_rate': 1e-3,
+        'weight_decay': 1e-5,
+        'warmup_epochs': 5,
+        'patience': 15,
+        
+        # Data loading
+        'num_workers': 4,  # Workers per GPU
+        
+        # Multi-GPU
+        'world_size': 4  # Number of GPUs
+    }
+    
+    print("\n" + "=" * 80)
+    print("Configuration:")
+    print("=" * 80)
+    for key, value in config.items():
+        print(f"  {key}: {value}")
+    
+    # Check GPU availability
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available. This script requires GPUs.")
+    
+    num_gpus = torch.cuda.device_count()
+    print(f"\n✓ Found {num_gpus} GPU(s)")
+    
+    for i in range(num_gpus):
+        props = torch.cuda.get_device_properties(i)
+        print(f"  GPU {i}: {props.name}")
+        print(f"    Memory: {props.total_memory / 1024**3:.2f} GB")
+        print(f"    Compute Capability: {props.major}.{props.minor}")
+    
+    if num_gpus < config['world_size']:
+        print(f"\n⚠ Warning: Requested {config['world_size']} GPUs but only {num_gpus} available.")
+        print(f"  Adjusting world_size to {num_gpus}")
+        config['world_size'] = num_gpus
+    
+    # Prepare data
+    print("\n" + "=" * 80)
+    print("Data Preparation:")
+    print("=" * 80)
+    
+    # Option 1: Use demo data (for testing)
+    data_dict = prepare_data(
+        num_nodes=1000000,  # Your actual dataset size
+        num_edges=16000000,
+        num_node_features=39,
+        num_classes=10,
+        train_ratio=0.7,
+        val_ratio=0.15
+    )
+    
+    # Option 2: Load real data (uncomment when ready)
+    # data_dict = load_real_data('path/to/your/data.pkl')
+    
+    # Add config to data_dict
+    data_dict['config'] = config
+    data_dict['config']['class_weights'] = data_dict['class_weights'].tolist()
+    
+    # Launch multi-GPU training
+    print("\n" + "=" * 80)
+    print("Starting Multi-GPU Training:")
+    print("=" * 80)
+    
+    if config['world_size'] > 1:
+        # Multi-GPU with DDP
+        import torch.multiprocessing as mp
+        mp.set_start_method('spawn', force=True)
+        
+        print(f"Spawning {config['world_size']} processes for DDP training...")
+        
+        # Note: In production, use torch.distributed.launch or torchrun
+        # This is a simplified version for demonstration
+        processes = []
+        for rank in range(config['world_size']):
+            p = mp.Process(target=main_worker, args=(rank, config['world_size'], data_dict))
+            p.start()
+            processes.append(p)
+        
+        for p in processes:
+            p.join()
+    else:
+        # Single GPU
+        print("Running on single GPU...")
+        main_worker(0, 1, data_dict)
+    
+    print("\n" + "=" * 80)
+    print("Training Complete!")
+    print("=" * 80)
+    print("\nBest model saved to: best_model_checkpoint.pt")
+    print("\nTo load the model for inference:")
+    print("  checkpoint = torch.load('best_model_checkpoint.pt')")
+    print("  model.load_state_dict(checkpoint['model_state_dict'])")
+
+
+def inference_example():
+    """
+    Example inference script for production deployment
+    """
+    print("Loading trained model for inference...")
+    
+    # Model configuration (must match training)
+    config = {
+        'num_node_features': 39,
+        'hidden_dim': 512,
+        'num_graphsage_layers': 2,
+        'num_transformer_layers': 4,
+        'num_heads': 8,
+        'num_classes': 10,
+        'dropout': 0.0,  # No dropout for inference
+        'use_virtual_node': True,
+        'use_temporal': False
+    }
+    
+    # Create model
+    model = SOTANetworkAttackDetector(**config)
+    
+    # Load checkpoint
+    checkpoint = torch.load('best_model_checkpoint.pt', map_location='cpu')
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    # Move to GPU
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)
+    
+    print(f"Model loaded on {device}")
+    print(f"Validation F1: {checkpoint['val_f1']:.4f}")
+    
+    # Example: Predict on new edges
+    # Load your test data
+    # data = ...  # PyG Data object
+    # test_edge_index = ...  # Edges to predict [2, E]
+    
+    # with torch.no_grad():
+    #     binary_logits, multiclass_logits, severity_scores = model(
+    #         data.x.to(device),
+    #         data.edge_index.to(device),
+    #         test_edge_index.to(device)
+    #     )
+    #     
+    #     # Get predictions
+    #     predictions = multiclass_logits.argmax(dim=-1)
+    #     confidence = F.softmax(multiclass_logits, dim=-1).max(dim=-1)[0]
+    #     
+    #     # Classification results
+    #     for i, (pred, conf, severity) in enumerate(zip(predictions, confidence, severity_scores)):
+    #         print(f"Edge {i}: Class={pred.item()}, Confidence={conf.item():.4f}, Severity={severity.item():.4f}")
+    
+    return model
+
+
+# Additional utility functions
+
+def analyze_attention_weights(model, data, edge_index, device='cuda'):
+    """
+    Analyze attention weights to understand model decisions
+    Useful for explainability in security applications
+    """
+    model.eval()
+    
+    with torch.no_grad():
+        _, _, _, attention_weights = model(
+            data.x.to(device),
+            data.edge_index.to(device),
+            edge_index.to(device),
+            return_attention=True
+        )
+    
+    # attention_weights is a list of attention matrices from each transformer layer
+    # Each entry: (edge_index, attention_weights) tuple
+    
+    print(f"Number of transformer layers: {len(attention_weights)}")
+    
+    for layer_idx, (attn_edge_idx, attn_weights) in enumerate(attention_weights):
+        print(f"\nLayer {layer_idx}:")
+        print(f"  Attention edges: {attn_edge_idx.shape}")
+        print(f"  Attention weights: {attn_weights.shape}")
+        print(f"  Mean attention: {attn_weights.mean().item():.4f}")
+        print(f"  Max attention: {attn_weights.max().item():.4f}")
+    
+    return attention_weights
+
+
+def export_to_onnx(model, dummy_input, output_path='model.onnx'):
+    """
+    Export model to ONNX format for deployment
+    """
+    model.eval()
+    
+    torch.onnx.export(
+        model,
+        dummy_input,
+        output_path,
+        export_params=True,
+        opset_version=14,
+        do_constant_folding=True,
+        input_names=['node_features', 'edge_index', 'edge_label_index'],
+        output_names=['binary_logits', 'multiclass_logits', 'severity_scores'],
+        dynamic_axes={
+            'node_features': {0: 'num_nodes'},
+            'edge_index': {1: 'num_edges'},
+            'edge_label_index': {1: 'num_target_edges'},
+            'binary_logits': {0: 'num_target_edges'},
+            'multiclass_logits': {0: 'num_target_edges'},
+            'severity_scores': {0: 'num_target_edges'}
+        }
+    )
+    
+    print(f"Model exported to {output_path}")
+
+
+if __name__ == '__main__':
+    # Run training
+    main()
+    
+    # After training, you can run inference
+    # model = inference_example()
+    
+    # Or analyze attention for explainability
+    # attention_weights = analyze_attention_weights(model, data, edge_index)
