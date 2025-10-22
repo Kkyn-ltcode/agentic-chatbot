@@ -1,67 +1,14 @@
-import polars as pl
-import torch
-from torch_geometric.data import Data
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-import numpy as np
-
-# === Step 1: Load the dataset ===
-df = pl.read_csv("/mnt/data/sample.csv")
-
-# You can inspect columns like:
-print(df.columns)
-print(df.head())
-
-# === Step 2: Encode categorical features ===
-# Example: assuming your dataset has these columns:
-# ["src_ip", "src_port", "dst_ip", "dst_port", "protocol", "pkt_count", "byte_count", "label"]
-
-cat_cols = ["src_ip", "dst_ip", "protocol"]
-num_cols = [c for c in df.columns if c not in cat_cols + ["label"]]
-
-# Encode categorical columns using sklearn LabelEncoder
-for c in cat_cols:
-    le = LabelEncoder()
-    df = df.with_columns(pl.Series(c, le.fit_transform(df[c].to_list())))
-
-# Encode label
-le_label = LabelEncoder()
-labels = torch.tensor(le_label.fit_transform(df["label"].to_list()), dtype=torch.long)
-
-# Normalize numeric features
-scaler = StandardScaler()
-num_data = scaler.fit_transform(df[num_cols].to_pandas())
-cat_data = df[cat_cols].to_numpy()
-x = np.concatenate([num_data, cat_data], axis=1)
-x = torch.tensor(x, dtype=torch.float)
-
-# === Step 3: Build edges ===
-# Each flow = node. Connect nodes that share a src_ip/src_port/dst_ip/dst_port.
-# We use Polars joins for efficiency.
-
-# Create src endpoint and dst endpoint as strings (optional for clarity)
 df = df.with_columns([
-    (pl.col("src_ip").cast(pl.Utf8) + ":" + pl.col("src_port").cast(pl.Utf8)).alias("src_endpoint"),
-    (pl.col("dst_ip").cast(pl.Utf8) + ":" + pl.col("dst_port").cast(pl.Utf8)).alias("dst_endpoint")
+    (pl.col("ipv4_src_addr") + ":" + pl.col("l4_src_port").cast(pl.Utf8) + ">" + pl.col("ipv4_dst_addr") + ":" + pl.col("l4_dst_port").cast(pl.Utf8) + "|" + pl.col("protocol").cast(pl.Utf8)).alias("flow_key"),
+    (pl.col("ipv4_dst_addr") + ":" + pl.col("l4_dst_port").cast(pl.Utf8) + ">" + pl.col("ipv4_src_addr") + ":" + pl.col("l4_src_port").cast(pl.Utf8) + "|" + pl.col("protocol").cast(pl.Utf8)).alias("rev_key"),
 ])
 
-# For each endpoint, find all rows sharing it, then connect them
-edges = set()
-for endpoint_col in ["src_endpoint", "dst_endpoint"]:
-    g = df.select(["row_nr", endpoint_col]).with_row_count("row_nr")
-    grouped = g.groupby(endpoint_col).agg(pl.col("row_nr"))
-    for group in grouped.iter_rows():
-        nodes = group[1]
-        if len(nodes) > 1:
-            # Create all pairwise edges within this group
-            for i in range(len(nodes)):
-                for j in range(i + 1, len(nodes)):
-                    edges.add((nodes[i], nodes[j]))
+# make small mapping flow_key -> flow_id
+flowkey_map = df.select(["flow_id","flow_key"]).write_parquet("tmp/flowkey_map.parquet")
+flowkey_map = pl.read_parquet("tmp/flowkey_map.parquet")
 
-# Convert edges to tensor
-edge_index = torch.tensor(list(edges), dtype=torch.long).t().contiguous()
+# join on rev_key to get reverse flow id
+df = df.join(flowkey_map.rename({"flow_key":"rev_key","flow_id":"rev_flow_id"}), on="rev_key", how="left")
 
-print(f"Total nodes: {x.shape[0]}, edges: {edge_index.shape[1]}")
-
-# === Step 4: Create graph data object ===
-data = Data(x=x, edge_index=edge_index, y=labels)
-print(data)
+# mark bidirectional
+df = df.with_column((pl.col("rev_flow_id").is_not_null()).cast(pl.Int64).alias("is_bidirectional"))
