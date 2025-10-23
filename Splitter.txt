@@ -1,78 +1,8 @@
-in_dim = data['flow'].x.size(1)
-model = HGTNet(in_dim=in_dim, hidden_dim=128, out_dim=int(class_weights.size(0)), n_layers=3, n_heads=4).to(device)
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-# optional scheduler
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
-criterion = torch.nn.CrossEntropyLoss(weight=class_weights)
-def train_one_epoch(model, loader, optimizer):
-    model.train()
-    total_loss = 0.0
-    for batch in loader:
-        # batch is HeteroData with batch['flow'].batch mapping etc.
-        batch = batch.to(device)
-        optimizer.zero_grad()
-        # forward: HGT expects x_dict and edge_index_dict
-        x_dict = {'flow': batch['flow'].x}
-        edge_index_dict = {}
-        for key in batch.edge_index_dict:
-            edge_index_dict[key] = batch.edge_index_dict[key].to(device)
-        logits = model(x_dict, edge_index_dict)  # logits for nodes present in this subgraph
-        # mapping: loader provides 'input_nodes' indices as batch['flow'].batch? Instead use batch['flow'].n_id or batch['flow'].batch_index
-        # In NeighborLoader, target nodes are the first N_target nodes; PyG provides 'batch['flow'].batch_size' or 'batch['flow'].n_id'
-        # Here we take the nodes corresponding to loader.target_nodes from the batch
-        target_mask = batch['flow'].has_isolated if False else None  # placeholder; simpler: use provided attribute
-        # Simpler: NeighborLoader returns attribute `batch['flow'].n_id`: indices of original nodes represented; the *first* len(seed_idx) correspond to the seed nodes per batch.
-        n_seed = batch['flow'].n_id.shape[0]  # careful: n_id lists all nodes in the subgraph; seed count is loader.input_nodes length per batch
-        # To get seed node indices inside the subgraph, PyG provides `batch['flow'].batch_size` or the loader yields `sampled_nodes` — but API varies.
-        # Simpler approach (works in many PyG versions): loader returns 'batch' and property batch['flow'].batch contains mapping to seed nodes - but to avoid API mismatch below, we'll use a safe pattern:
-        seed_mask = getattr(batch['flow'], 'batch', None)
-        # We'll instead compute the loss on nodes whose original indices are in train_idx set intersection. Easiest approach is:
-        node_orig_ids = batch['flow'].n_id.to(device)  # original global node ids for nodes in this subgraph
-        # identify which positions correspond to the target seeds = those in node_orig_ids that are in the loader's input node list (we can check membership)
-        # loader provides the input_nodes but not in the batch; we can reconstruct at creation if needed. To keep snippet practical, assume batch includes attribute 'batch_size' or first K are targets.
-        # Common PyG behavior: the first `batch_size` entries of n_id are the seed nodes. We'll use that.
-        seed_count = loader.batch_size if hasattr(loader, "batch_size") else 2048
-        seed_count = min(seed_count, node_orig_ids.size(0))
-        targets_pos = torch.arange(seed_count, device=device)
-        y_true = batch['flow'].y[targets_pos].to(device)
-        y_pred = logits[targets_pos]
-        loss = criterion(y_pred, y_true)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-        total_loss += loss.item() * y_true.size(0)
-    return total_loss / len(loader.dataset)  # approximate average
-
-def evaluate(model, loader):
-    model.eval()
-    preds = []
-    trues = []
-    with torch.no_grad():
-        for batch in loader:
-            batch = batch.to(device)
-            x_dict = {'flow': batch['flow'].x}
-            edge_index_dict = {k: batch.edge_index_dict[k].to(device) for k in batch.edge_index_dict}
-            logits = model(x_dict, edge_index_dict)
-            node_orig_ids = batch['flow'].n_id.to(device)
-            seed_count = min(loader.batch_size, node_orig_ids.size(0))
-            targets_pos = torch.arange(seed_count, device=device)
-            y_true = batch['flow'].y[targets_pos].cpu().numpy()
-            y_pred = logits[targets_pos].argmax(dim=1).cpu().numpy()
-            preds.append(y_pred); trues.append(y_true)
-    preds = np.concatenate(preds)
-    trues = np.concatenate(trues)
-    macro_f1 = f1_score(trues, preds, average='macro')
-    return macro_f1, classification_report(trues, preds, digits=4)
-best_f1 = 0.0
-for epoch in range(1, 31):
-    train_loss = train_one_epoch(model, train_loader, optimizer)
-    val_f1, report = evaluate(model, val_loader)
-    scheduler.step()
-    print(f"Epoch {epoch:02d}  train_loss={train_loss:.4f}  val_macro_f1={val_f1:.4f}")
-    if val_f1 > best_f1:
-        best_f1 = val_f1
-        torch.save(model.state_dict(), "best_hgt.pt")
-        print("Saved best model, f1:", best_f1)
-    # optional: print classification report
-    print(report)
+df.select([
+    pl.col(col).is_nan().any().alias(f"{col}_has_nan")
+    for col in df.columns
+])
+df.select([
+    ((pl.col(col) == float("inf")) | (pl.col(col) == float("-inf"))).any().alias(f"{col}_has_inf")
+    for col in df.columns
+])
