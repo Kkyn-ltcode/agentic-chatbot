@@ -1,15 +1,50 @@
-import polars as pl
+import numpy as np
+import itertools
+from pathlib import Path
 
-# Example DataFrame
-df = pl.DataFrame({
-    "group": ["A", "A", "B", "B", "B", "C"],
-    "value": [1, 2, 3, 4, 5, 6],
-})
+# load src endpoint groups as small parquet mapping: src_ep_id -> list(flow_id)
+# For scale, produce groups file-by-file: create "groups_src/{src_ep_id}.parquet" if needed.
+src_groups = df.groupby("src_ep_id").agg(pl.col("flow_id").list().alias("flow_ids"))
+src_groups.write_parquet("tmp/src_groups.parquet")  # careful: may be big
 
-# Group by "group" and aggregate "value" as list
-result = (
-    df.group_by("group")
-      .agg(pl.col("value").list())
-)
+# process in streaming fashion
+src_iter = pl.read_parquet("tmp/src_groups.parquet").iter_rows()  # yields rows one-by-one
+edge_writer = Path("graph/edges_type1.parquet")
 
-print(result)
+def choose_K(N):
+    if N <= 10: return None   # None -> full clique
+    elif N <= 100: return 20
+    elif N <= 1000: return 15
+    elif N <= 10000: return 10
+    else: return 5
+
+edges_buf = []
+BATCH = 500000  # flush every 500k edges
+for row in src_iter:
+    src_ep_id = row[0]
+    flows = row[1]  # list of flow_ids
+    N = len(flows)
+    K = choose_K(N)
+    if K is None:
+        # full clique
+        for u,v in itertools.combinations(flows,2):
+            edges_buf.append((u,v))
+    else:
+        arr = np.array(flows)
+        for u in flows:
+            if N <= K+1:
+                neigh = arr[arr != u]
+            else:
+                # choose K random neighbors without replacement
+                choices = np.random.choice(arr[arr != u], size=K, replace=False)
+                neigh = choices
+            for v in neigh:
+                edges_buf.append((u,int(v)))
+    # flush periodically
+    if len(edges_buf) >= BATCH:
+        pl.DataFrame({"u":[e[0] for e in edges_buf],"v":[e[1] for e in edges_buf]}).write_parquet("graph/edges_type1.parquet", mode="append")
+        edges_buf = []
+
+# final flush
+if edges_buf:
+    pl.DataFrame({"u":[e[0] for e in edges_buf],"v":[e[1] for e in edges_buf]}).write_parquet("graph/edges_type1.parquet", mode="append")
