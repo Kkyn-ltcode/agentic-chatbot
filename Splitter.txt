@@ -1,23 +1,46 @@
-# num_neighbors: for each relation, provide list of neighbor counts per hop (e.g., [20,10] for 2 hops)
-# For HeteroData, we pass dict {(src,rel,dst): [k1,k2]}
-num_neighbors = {
-    ('flow','same_source','flow'): [20, 10],
-    ('flow','same_dest','flow'):   [20, 10],
-    ('flow','bidirectional','flow'): [10, 5],
-}
+class HGTNet(nn.Module):
+    def __init__(self, in_dim, hidden_dim=128, out_dim=10, n_layers=3, n_heads=4, dropout=0.1):
+        super().__init__()
+        self.input_proj = nn.Linear(in_dim, hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        # metadata for HGTConv: (node_types, edge_types) inferred at runtime from data
+        # instantiate HGTConv modules in a ModuleList
+        self.convs = nn.ModuleList()
+        for _ in range(n_layers):
+            self.convs.append(HGTConv(in_channels=hidden_dim,
+                                      out_channels=hidden_dim,
+                                      metadata=(['flow'], [
+                                          ('flow','same_source','flow'),
+                                          ('flow','same_dest','flow'),
+                                          ('flow','bidirectional','flow')
+                                      ]),
+                                      heads=n_heads,
+                                      group='in'))  # group param to match versions; default behavior ok
+        self.norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(n_layers)])
+        self.ffns  = nn.ModuleList([nn.Sequential(
+                        nn.Linear(hidden_dim, hidden_dim*4),
+                        nn.GELU(),
+                        nn.Linear(hidden_dim*4, hidden_dim),
+                        nn.Dropout(dropout)
+                    ) for _ in range(n_layers)])
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim//2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim//2, out_dim)
+        )
 
-train_loader = NeighborLoader(
-    data,
-    num_neighbors=num_neighbors,
-    input_nodes=('flow', torch.tensor(train_idx, dtype=torch.long)),
-    batch_size=2048,
-    shuffle=True,
-)
-
-val_loader = NeighborLoader(
-    data,
-    num_neighbors=num_neighbors,
-    input_nodes=('flow', torch.tensor(val_idx, dtype=torch.long)),
-    batch_size=2048,
-    shuffle=False,
-)
+    def forward(self, x_dict, edge_index_dict):
+        # x_dict: {'flow': Tensor[N_flow, in_dim]}
+        h = self.input_proj(x_dict['flow'])   # [N, hidden_dim]
+        h = F.relu(h)
+        h_dict = {'flow': h}
+        for conv, norm, ffn in zip(self.convs, self.norms, self.ffns):
+            h_new = conv(h_dict, edge_index_dict)  # returns dict
+            # residual + norm + FFN
+            h_flow = h_dict['flow'] + self.dropout(h_new['flow'])
+            h_flow = norm(h_flow)
+            h_flow = h_flow + ffn(h_flow)
+            h_dict = {'flow': h_flow}
+        out = self.classifier(h_dict['flow'])
+        return out  # logits for all nodes in the batch's subgraph
