@@ -1,14 +1,12 @@
-df = df.with_columns([
-    (pl.col("ipv4_src_addr") + ":" + pl.col("l4_src_port").cast(pl.Utf8) + ">" + pl.col("ipv4_dst_addr") + ":" + pl.col("l4_dst_port").cast(pl.Utf8) + "|" + pl.col("protocol").cast(pl.Utf8)).alias("flow_key"),
-    (pl.col("ipv4_dst_addr") + ":" + pl.col("l4_dst_port").cast(pl.Utf8) + ">" + pl.col("ipv4_src_addr") + ":" + pl.col("l4_src_port").cast(pl.Utf8) + "|" + pl.col("protocol").cast(pl.Utf8)).alias("rev_key"),
-])
+import polars as pl
 
-# make small mapping flow_key -> flow_id
-flowkey_map = df.select(["flow_id","flow_key"]).write_parquet("tmp/flowkey_map.parquet")
-flowkey_map = pl.read_parquet("tmp/flowkey_map.parquet")
+df = pl.DataFrame({
+    "src_ep_id": [1, 1, 2, 2, 3],
+    "flow_id": [10, 11, 12, 13, 14]
+})
 
-# join on rev_key to get reverse flow id
-df = df.join(flowkey_map.rename({"flow_key":"rev_key","flow_id":"rev_flow_id"}), on="rev_key", how="left")
+src_groups = df.group_by("src_ep_id").agg(
+    pl.col("flow_id").list.alias("flow_ids")
+)
 
-# mark bidirectional
-df = df.with_column((pl.col("rev_flow_id").is_not_null()).cast(pl.Int64).alias("is_bidirectional"))
+print(src_groups)
