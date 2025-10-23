@@ -1,12 +1,15 @@
 import polars as pl
 
+# Example DataFrame
 df = pl.DataFrame({
-    "src_ep_id": [1, 1, 2, 2, 3],
-    "flow_id": [10, 11, 12, 13, 14]
+    "group": ["A", "A", "B", "B", "B", "C"],
+    "value": [1, 2, 3, 4, 5, 6],
 })
 
-src_groups = df.group_by("src_ep_id").agg(
-    pl.col("flow_id").list.alias("flow_ids")
+# Group by "group" and aggregate "value" as list
+result = (
+    df.group_by("group")
+      .agg(pl.col("value").list())
 )
 
-print(src_groups)
+print(result)
