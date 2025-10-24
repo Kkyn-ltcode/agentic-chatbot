@@ -1,20 +1,16 @@
-from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+# In load_and_prepare_data()
+print("Checking for NaN/Inf in features...")
+if torch.isnan(data['flow'].x).any() or torch.isinf(data['flow'].x).any():
+    print("⚠️ NaN/Inf found in node features! Replacing with 0...")
+    data['flow'].x = torch.nan_to_num(data['flow'].x, nan=0.0, posinf=0.0, neginf=0.0)
 
-# Warmup for first 5 epochs, then cosine decay
-warmup_scheduler = LinearLR(
-    optimizer, 
-    start_factor=0.1,  # Start at 10% of LR
-    total_iters=5
-)
+print("Feature stats:")
+print(f"  Min: {data['flow'].x.min():.2f}")
+print(f"  Max: {data['flow'].x.max():.2f}")
+print(f"  Mean: {data['flow'].x.mean():.2f}")
+print(f"  Std: {data['flow'].x.std():.2f}")
 
-cosine_scheduler = CosineAnnealingLR(
-    optimizer,
-    T_max=config['epochs'] - 5,
-    eta_min=1e-6
-)
-
-scheduler = SequentialLR(
-    optimizer,
-    schedulers=[warmup_scheduler, cosine_scheduler],
-    milestones=[5]
-)
+# Normalize if needed
+if data['flow'].x.max() > 1000 or data['flow'].x.std() > 100:
+    print("⚠️ Features have large scale, normalizing...")
+    data['flow'].x = (data['flow'].x - data['flow'].x.mean(0)) / (data['flow'].x.std(0) + 1e-8)
