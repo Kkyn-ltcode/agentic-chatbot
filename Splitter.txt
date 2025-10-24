@@ -1,106 +1,153 @@
 import torch
 import numpy as np
 
-# Assume x is your (16M, 43) tensor on CPU
-# If on GPU, move to CPU first: x = x.cpu()
-
-print("="*60)
-print("MEMORY-EFFICIENT FEATURE ANALYSIS")
-print("="*60)
-
-print(f"\nShape: {x.shape}")
-print(f"Device: {x.device}")
-
-# Overall stats (efficient)
-print(f"\nOverall Stats:")
-print(f"  Min: {x.min().item():.2f}")
-print(f"  Max: {x.max().item():.2f}")
-print(f"  Mean: {x.mean().item():.2f}")
-print(f"  Std: {x.std().item():.2f}")
-
-# Use numpy for median (more memory efficient)
-x_np = x.numpy() if x.device.type == 'cpu' else x.cpu().numpy()
-print(f"  Median: {np.median(x_np):.2f}")
-
-# Data quality
-print(f"\nData Quality:")
-print(f"  NaN count: {np.isnan(x_np).sum()}")
-print(f"  Inf count: {np.isinf(x_np).sum()}")
-print(f"  Zero count: {(x_np == 0).sum()} ({(x_np == 0).sum() / x_np.size * 100:.2f}%)")
-print(f"  Negative count: {(x_np < 0).sum()} ({(x_np < 0).sum() / x_np.size * 100:.2f}%)")
-
-# Per-feature analysis (memory efficient)
-print(f"\n{'='*60}")
-print("PER-FEATURE ANALYSIS:")
-print(f"{'='*60}")
-print(f"{'Feat':<6} {'Min':<10} {'Max':<10} {'Mean':<10} {'Std':<10} {'Zeros%':<10}")
-print("-"*60)
-
-for i in range(x.shape[1]):
-    # Process one feature at a time
-    feat = x_np[:, i]
+def analyze_features(x):
+    """
+    Comprehensive analysis of feature tensor to determine optimal normalization.
     
-    zeros_pct = (feat == 0).sum() / feat.shape[0] * 100
+    Args:
+        x: torch.Tensor of shape (N, 43) - your node features
     
-    print(f"{i:<6} {feat.min():<10.2f} {feat.max():<10.2f} "
-          f"{feat.mean():<10.2f} {feat.std():<10.2f} {zeros_pct:<10.1f}")
+    Returns:
+        dict: Analysis results
+    """
+    print("=" * 80)
+    print("FEATURE TENSOR ANALYSIS")
+    print("=" * 80)
+    
+    results = {}
+    
+    # Basic info
+    print(f"\nShape: {x.shape}")
+    print(f"Dtype: {x.dtype}")
+    print(f"Device: {x.device}")
+    
+    # Convert to float for analysis if needed
+    if x.dtype != torch.float32 and x.dtype != torch.float64:
+        x = x.float()
+    
+    # Per-feature statistics
+    print("\n" + "=" * 80)
+    print("PER-FEATURE STATISTICS")
+    print("=" * 80)
+    
+    for i in range(x.shape[1]):
+        feat = x[:, i]
+        
+        # Basic stats
+        min_val = feat.min().item()
+        max_val = feat.max().item()
+        mean_val = feat.mean().item()
+        std_val = feat.std().item()
+        median_val = feat.median().item()
+        
+        # Check for special values
+        n_nan = torch.isnan(feat).sum().item()
+        n_inf = torch.isinf(feat).sum().item()
+        n_zero = (feat == 0).sum().item()
+        n_unique = len(torch.unique(feat))
+        
+        # Distribution checks
+        q25 = torch.quantile(feat, 0.25).item()
+        q75 = torch.quantile(feat, 0.75).item()
+        iqr = q75 - q25
+        
+        print(f"\n--- Feature {i} ---")
+        print(f"  Range: [{min_val:.6f}, {max_val:.6f}]")
+        print(f"  Mean: {mean_val:.6f}, Std: {std_val:.6f}")
+        print(f"  Median: {median_val:.6f}")
+        print(f"  Q25: {q25:.6f}, Q75: {q75:.6f}, IQR: {iqr:.6f}")
+        print(f"  Unique values: {n_unique}")
+        print(f"  Zeros: {n_zero} ({100*n_zero/len(feat):.2f}%)")
+        
+        if n_nan > 0:
+            print(f"  ⚠️  NaN values: {n_nan}")
+        if n_inf > 0:
+            print(f"  ⚠️  Inf values: {n_inf}")
+        
+        # Detect feature type
+        if n_unique == 2:
+            print(f"  → Type: BINARY")
+        elif n_unique <= 10:
+            print(f"  → Type: CATEGORICAL (low cardinality)")
+        elif std_val == 0:
+            print(f"  → Type: CONSTANT")
+        elif abs(std_val) < 1e-6:
+            print(f"  → Type: NEAR-CONSTANT")
+        else:
+            # Check scale
+            if abs(max_val - min_val) > 1000:
+                print(f"  → Type: CONTINUOUS (LARGE SCALE)")
+            elif abs(max_val - min_val) < 0.01:
+                print(f"  → Type: CONTINUOUS (SMALL SCALE)")
+            else:
+                print(f"  → Type: CONTINUOUS")
+            
+            # Check distribution
+            if abs(mean_val - median_val) / (std_val + 1e-8) > 1:
+                print(f"  → Distribution: SKEWED")
+            else:
+                print(f"  → Distribution: ROUGHLY SYMMETRIC")
+    
+    # Global statistics
+    print("\n" + "=" * 80)
+    print("GLOBAL STATISTICS")
+    print("=" * 80)
+    
+    global_min = x.min().item()
+    global_max = x.max().item()
+    global_mean = x.mean().item()
+    global_std = x.std().item()
+    
+    print(f"\nGlobal min: {global_min:.6f}")
+    print(f"Global max: {global_max:.6f}")
+    print(f"Global mean: {global_mean:.6f}")
+    print(f"Global std: {global_std:.6f}")
+    print(f"Total NaN: {torch.isnan(x).sum().item()}")
+    print(f"Total Inf: {torch.isinf(x).sum().item()}")
+    
+    # Check if already normalized
+    print("\n" + "=" * 80)
+    print("NORMALIZATION CHECKS")
+    print("=" * 80)
+    
+    if abs(global_min) < 1e-6 and abs(global_max - 1) < 1e-6:
+        print("\n✓ Data appears to be in [0, 1] range")
+    elif abs(global_min + 1) < 1e-6 and abs(global_max - 1) < 1e-6:
+        print("\n✓ Data appears to be in [-1, 1] range")
+    elif abs(global_mean) < 0.1 and abs(global_std - 1) < 0.1:
+        print("\n✓ Data appears to be standardized (mean≈0, std≈1)")
+    else:
+        print("\n✗ Data is not normalized")
+    
+    print("\n" + "=" * 80)
+    print("RECOMMENDATIONS")
+    print("=" * 80)
+    print("\nBased on the analysis above, I'll recommend:")
+    print("1. Whether to use StandardScaler, MinMaxScaler, or RobustScaler")
+    print("2. Whether to normalize per-feature or globally")
+    print("3. How to handle special features (binary, categorical, constant)")
+    print("4. Whether any features should be log-transformed first")
+    
+    return results
 
-# Distribution analysis (sample-based for memory efficiency)
-print(f"\n{'='*60}")
-print("DISTRIBUTION ANALYSIS (sampled):")
-print(f"{'='*60}")
 
-# Sample 1M rows for percentile calculation (if >1M rows)
-if x.shape[0] > 1_000_000:
-    print("Note: Using 1M sample for percentiles (dataset too large)\n")
-    sample_idx = np.random.choice(x.shape[0], size=1_000_000, replace=False)
-    x_sample = x_np[sample_idx, :]
-else:
-    x_sample = x_np
+# Example usage:
+# x = torch.randn(16_000_000, 43)  # Your actual data
+# results = analyze_features(x)
 
-for i in range(x.shape[1]):
-    feat = x_sample[:, i]
-    
-    # Use numpy percentiles (more memory efficient)
-    q01 = np.percentile(feat, 1)
-    q25 = np.percentile(feat, 25)
-    q50 = np.percentile(feat, 50)
-    q75 = np.percentile(feat, 75)
-    q99 = np.percentile(feat, 99)
-    
-    # IQR outliers
-    iqr = q75 - q25
-    lower_fence = q25 - 1.5 * iqr
-    upper_fence = q75 + 1.5 * iqr
-    outliers = ((feat < lower_fence) | (feat > upper_fence)).sum()
-    outlier_pct = outliers / feat.shape[0] * 100
-    
-    print(f"Feature {i}:")
-    print(f"  Percentiles: 1%={q01:.2f}, 25%={q25:.2f}, 50%={q50:.2f}, 75%={q75:.2f}, 99%={q99:.2f}")
-    print(f"  Outliers: {outlier_pct:.2f}%")
+print("\n" + "=" * 80)
+print("INSTRUCTIONS")
+print("=" * 80)
+print("""
+To use this script:
 
-# Identify features needing attention
-print(f"\n{'='*60}")
-print("FEATURES NEEDING ATTENTION:")
-print(f"{'='*60}")
+1. Load your tensor x (shape: 16mil x 43)
+2. Run: analyze_features(x)
+3. Share the complete output with me
+4. I'll provide specific normalization code based on the results
 
-for i in range(x.shape[1]):
-    feat = x_np[:, i]
-    
-    issues = []
-    
-    if feat.std() < 0.01:
-        issues.append("low variance")
-    if feat.max() > 10:
-        issues.append(f"large outlier (max={feat.max():.1f})")
-    if feat.min() < -10:
-        issues.append(f"large outlier (min={feat.min():.1f})")
-    if (feat == 0).sum() / feat.shape[0] > 0.5:
-        issues.append(f"{(feat == 0).sum() / feat.shape[0] * 100:.0f}% zeros")
-    
-    if issues:
-        print(f"Feature {i}: {', '.join(issues)}")
-
-print(f"\n{'='*60}")
-print("ANALYSIS COMPLETE")
-print(f"{'='*60}")
+Note: If 16M rows is too much memory, you can sample:
+    x_sample = x[torch.randperm(len(x))[:100000]]  # 100k random samples
+    analyze_features(x_sample)
+""")
