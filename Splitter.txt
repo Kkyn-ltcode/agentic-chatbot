@@ -1,10 +1,6 @@
-# Check per-feature statistics
-for i in range(x.shape[1]):
-    feat = x_normalized[:, i]
-    print(f"Feature {i} ({feature_types[i]}): "
-          f"min={feat.min():.2f}, max={feat.max():.2f}, "
-          f"std={feat.std():.2f}, zeros={((feat==0).sum()/len(feat)*100):.1f}%")
-
-# Check for outliers
-print(f"\nValues > 5: {(x_normalized > 5).sum()}")
-print(f"Values < -5: {(x_normalized < -5).sum()}")
+# After loss calculation
+if torch.isnan(loss) or torch.isinf(loss):
+    print(f"NaN/Inf detected at epoch {epoch}")
+    print(f"Model weights: {[p.abs().max() for p in model.parameters()]}")
+    print(f"Gradients: {[p.grad.abs().max() for p in model.parameters() if p.grad is not None]}")
+    break
