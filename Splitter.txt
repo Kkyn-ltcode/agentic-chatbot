@@ -1,107 +1,215 @@
 import torch
 import numpy as np
 
-def investigate_outliers(x, sample_size=500000):
+class NetworkFlowNormalizer:
     """
-    Deep dive into extreme values to understand the data distribution.
+    Robust normalization for network flow data with extreme outliers.
+    Handles zeros, skewed distributions, and values ranging to 1e+304.
     """
-    print("=" * 80)
-    print("OUTLIER INVESTIGATION")
-    print("=" * 80)
     
-    n_rows, n_features = x.shape
-    print(f"\nShape: {x.shape}")
-    
-    # Sample for analysis
-    if n_rows > sample_size:
-        indices = torch.randperm(n_rows)[:sample_size]
-        x_sample = x[indices]
-        print(f"Using sample of {sample_size:,} rows")
-    else:
-        x_sample = x
-    
-    # Convert to float64 for better precision
-    if x.dtype != torch.float64:
-        x = x.double()
-        x_sample = x_sample.double()
-    
-    print("\n" + "=" * 80)
-    print("EXTREME VALUE ANALYSIS")
-    print("=" * 80)
-    
-    for i in range(n_features):
-        feat = x[:, i]
-        feat_sample = x_sample[:, i]
+    def __init__(self, method='log_standard', clip_percentile=99.9):
+        """
+        Args:
+            method: 'log_standard', 'robust', 'clip_standard', or 'minmax_log'
+            clip_percentile: percentile to clip at (e.g., 99.9)
+        """
+        self.method = method
+        self.clip_percentile = clip_percentile
+        self.stats = {}
         
-        # Remove zeros for non-zero analysis
-        feat_nonzero = feat[feat != 0]
+    def fit(self, x, sample_size=500000):
+        """
+        Compute statistics needed for normalization.
         
-        print(f"\n--- Feature {i} ---")
-        print(f"  Total values: {len(feat):,}")
-        print(f"  Zeros: {(feat == 0).sum().item():,} ({100*(feat == 0).sum().item()/len(feat):.2f}%)")
-        print(f"  Non-zero values: {len(feat_nonzero):,}")
+        Args:
+            x: torch.Tensor of shape (N, 43)
+            sample_size: number of rows to sample for percentile computation
+        """
+        print(f"Computing normalization statistics using method: {self.method}")
+        n_rows, n_features = x.shape
         
-        if len(feat_nonzero) > 0:
-            min_nz = feat_nonzero.min().item()
-            max_nz = feat_nonzero.max().item()
-            mean_nz = feat_nonzero.mean().item()
-            median_nz = feat_nonzero.median().item()
-            
-            print(f"\n  Non-zero stats:")
-            print(f"    Min: {min_nz:.6e}")
-            print(f"    Max: {max_nz:.6e}")
-            print(f"    Mean: {mean_nz:.6e}")
-            print(f"    Median: {median_nz:.6e}")
-            
-            # Percentiles on sample (non-zero only)
-            feat_nz_sample = feat_sample[feat_sample != 0]
-            if len(feat_nz_sample) > 0:
-                feat_np = feat_nz_sample.cpu().numpy()
-                
-                percentiles = [50, 75, 90, 95, 99, 99.9, 99.99, 100]
-                print(f"\n  Percentiles (non-zero):")
-                for p in percentiles:
-                    val = np.percentile(feat_np, p)
-                    print(f"    {p:>6.2f}%: {val:.6e}")
-                
-                # Count extreme values
-                thresholds = [1e10, 1e50, 1e100, 1e200, 1e300]
-                print(f"\n  Values exceeding thresholds:")
-                for thresh in thresholds:
-                    count = (feat_nonzero > thresh).sum().item()
-                    if count > 0:
-                        pct = 100 * count / len(feat_nonzero)
-                        print(f"    > {thresh:.0e}: {count:,} ({pct:.4f}%)")
-                
-                # Check if values look like they might be corrupted
-                if max_nz > 1e100:
-                    print(f"\n  ⚠️  EXTREMELY LARGE VALUES DETECTED!")
-                    print(f"      Max value {max_nz:.2e} suggests possible:")
-                    print(f"      - Data corruption")
-                    print(f"      - Overflow during computation")
-                    print(f"      - Missing value encoding gone wrong")
-                    print(f"      - Need for log transformation")
+        # Sample for percentile computation (memory efficient)
+        if n_rows > sample_size:
+            indices = torch.randperm(n_rows)[:sample_size]
+            x_sample = x[indices]
         else:
-            print(f"  All zeros!")
+            x_sample = x
+        
+        x_sample_np = x_sample.cpu().numpy()
+        
+        for i in range(n_features):
+            feat = x[:, i]
+            feat_sample = x_sample_np[:, i]
+            
+            # Store per-feature stats
+            self.stats[i] = {}
+            
+            if self.method == 'log_standard':
+                # Compute stats on log-transformed non-zero values
+                feat_nonzero = feat[feat > 0]
+                if len(feat_nonzero) > 0:
+                    log_feat = torch.log1p(feat_nonzero)  # log(1 + x)
+                    self.stats[i]['mean'] = log_feat.mean().item()
+                    self.stats[i]['std'] = log_feat.std().item()
+                else:
+                    self.stats[i]['mean'] = 0.0
+                    self.stats[i]['std'] = 1.0
+                    
+            elif self.method == 'robust':
+                # Use median and IQR (immune to outliers)
+                feat_sample_nonzero = feat_sample[feat_sample > 0]
+                if len(feat_sample_nonzero) > 0:
+                    self.stats[i]['median'] = np.median(feat_sample_nonzero)
+                    self.stats[i]['q25'] = np.percentile(feat_sample_nonzero, 25)
+                    self.stats[i]['q75'] = np.percentile(feat_sample_nonzero, 75)
+                    self.stats[i]['iqr'] = self.stats[i]['q75'] - self.stats[i]['q25']
+                    if self.stats[i]['iqr'] < 1e-6:
+                        self.stats[i]['iqr'] = 1.0
+                else:
+                    self.stats[i]['median'] = 0.0
+                    self.stats[i]['iqr'] = 1.0
+                    
+            elif self.method == 'clip_standard':
+                # Clip at percentile, then standardize
+                if len(feat_sample[feat_sample > 0]) > 0:
+                    clip_val = np.percentile(feat_sample, self.clip_percentile)
+                    self.stats[i]['clip_val'] = clip_val
+                    
+                    # Compute mean/std on clipped full data
+                    feat_clipped = torch.clamp(feat, max=clip_val)
+                    self.stats[i]['mean'] = feat_clipped.mean().item()
+                    self.stats[i]['std'] = feat_clipped.std().item()
+                else:
+                    self.stats[i]['clip_val'] = 1.0
+                    self.stats[i]['mean'] = 0.0
+                    self.stats[i]['std'] = 1.0
+                    
+            elif self.method == 'minmax_log':
+                # Log transform then scale to [0, 1]
+                feat_nonzero = feat[feat > 0]
+                if len(feat_nonzero) > 0:
+                    log_feat = torch.log1p(feat_nonzero)
+                    self.stats[i]['log_min'] = log_feat.min().item()
+                    self.stats[i]['log_max'] = log_feat.max().item()
+                    self.stats[i]['log_range'] = self.stats[i]['log_max'] - self.stats[i]['log_min']
+                    if self.stats[i]['log_range'] < 1e-6:
+                        self.stats[i]['log_range'] = 1.0
+                else:
+                    self.stats[i]['log_min'] = 0.0
+                    self.stats[i]['log_max'] = 1.0
+                    self.stats[i]['log_range'] = 1.0
+        
+        print(f"✓ Fitted on {n_features} features")
+        return self
     
-    # Overall recommendations
-    print("\n" + "=" * 80)
-    print("DIAGNOSTIC QUESTIONS")
-    print("=" * 80)
-    print("\n1. Are these extremely large values (1e+304) expected in your data?")
-    print("   - If NO: They might be corrupted/missing value indicators")
-    print("   - If YES: You likely need log transformation or clipping")
-    print("\n2. What does this data represent?")
-    print("   - Counts/frequencies? → Log transform + StandardScaler")
-    print("   - Measurements? → Check if large values are errors")
-    print("   - Already transformed? → May need to undo transformation")
-    print("\n3. Can you tolerate removing/clipping extreme outliers?")
-    print("   - Option A: Clip at 99.9th percentile")
-    print("   - Option B: Log transform (log(x + 1) for zeros)")
-    print("   - Option C: Robust scaling (ignore outliers)")
+    def transform(self, x):
+        """
+        Apply normalization to data.
+        
+        Args:
+            x: torch.Tensor of shape (N, 43)
+            
+        Returns:
+            Normalized tensor of same shape
+        """
+        x_norm = torch.zeros_like(x, dtype=torch.float32)
+        n_features = x.shape[1]
+        
+        for i in range(n_features):
+            feat = x[:, i]
+            
+            if self.method == 'log_standard':
+                # log(1 + x), then standardize
+                feat_log = torch.log1p(feat)
+                mean = self.stats[i]['mean']
+                std = self.stats[i]['std']
+                if std > 1e-6:
+                    x_norm[:, i] = (feat_log - mean) / std
+                else:
+                    x_norm[:, i] = feat_log - mean
+                    
+            elif self.method == 'robust':
+                # (x - median) / IQR
+                median = self.stats[i]['median']
+                iqr = self.stats[i]['iqr']
+                x_norm[:, i] = (feat - median) / iqr
+                
+            elif self.method == 'clip_standard':
+                # Clip then standardize
+                clip_val = self.stats[i]['clip_val']
+                feat_clipped = torch.clamp(feat, max=clip_val)
+                mean = self.stats[i]['mean']
+                std = self.stats[i]['std']
+                if std > 1e-6:
+                    x_norm[:, i] = (feat_clipped - mean) / std
+                else:
+                    x_norm[:, i] = feat_clipped - mean
+                    
+            elif self.method == 'minmax_log':
+                # Log then scale to [0, 1]
+                feat_log = torch.log1p(feat)
+                log_min = self.stats[i]['log_min']
+                log_range = self.stats[i]['log_range']
+                x_norm[:, i] = (feat_log - log_min) / log_range
+        
+        return x_norm
     
-    return None
+    def fit_transform(self, x, sample_size=500000):
+        """Fit and transform in one step."""
+        self.fit(x, sample_size)
+        return self.transform(x)
 
-# Run this
-print("Run: investigate_outliers(x)")
-print("\nThen answer the diagnostic questions above!")
+
+# RECOMMENDED USAGE FOR NETWORK FLOW DATA
+print("=" * 80)
+print("RECOMMENDED APPROACH FOR NETWORK FLOW DATA")
+print("=" * 80)
+print("""
+Network flow data (bytes, packets, duration, etc.) is typically:
+- Right-skewed with many small values and few huge ones
+- Contains many zeros (no traffic)
+- Spans many orders of magnitude
+
+BEST METHOD: 'log_standard'
+- Handles zeros naturally with log1p (log(1 + x))
+- Compresses extreme values
+- Standard for network traffic analysis
+""")
+
+print("\n" + "=" * 80)
+print("USAGE")
+print("=" * 80)
+print("""
+# Option 1: Log + Standardization (RECOMMENDED for network flow)
+normalizer = NetworkFlowNormalizer(method='log_standard')
+x_normalized = normalizer.fit_transform(x)
+
+# Option 2: Robust scaling (if you want to preserve outliers)
+normalizer = NetworkFlowNormalizer(method='robust')
+x_normalized = normalizer.fit_transform(x)
+
+# Option 3: Clip extreme outliers then standardize
+normalizer = NetworkFlowNormalizer(method='clip_standard', clip_percentile=99.9)
+x_normalized = normalizer.fit_transform(x)
+
+# Option 4: Log + MinMax [0,1] scaling
+normalizer = NetworkFlowNormalizer(method='minmax_log')
+x_normalized = normalizer.fit_transform(x)
+
+# Then use x_normalized in your graph model
+""")
+
+print("\n" + "=" * 80)
+print("VERIFICATION")
+print("=" * 80)
+print("""
+After normalization, check the result:
+
+x_norm = normalizer.fit_transform(x)
+print(f"Normalized - Min: {x_norm.min().item():.6f}")
+print(f"Normalized - Max: {x_norm.max().item():.6f}")
+print(f"Normalized - Mean: {x_norm.mean().item():.6f}")
+print(f"Normalized - Std: {x_norm.std().item():.6f}")
+print(f"NaN count: {torch.isnan(x_norm).sum().item()}")
+print(f"Inf count: {torch.isinf(x_norm).sum().item()}")
+""")
