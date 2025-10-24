@@ -1,208 +1,107 @@
 import torch
 import numpy as np
 
-def analyze_features(x, sample_size=500000):
+def investigate_outliers(x, sample_size=500000):
     """
-    Memory-efficient analysis of feature tensor using sampling.
-    
-    Args:
-        x: torch.Tensor of shape (N, 43) - your node features
-        sample_size: number of rows to sample for detailed stats
-    
-    Returns:
-        dict: Analysis results
+    Deep dive into extreme values to understand the data distribution.
     """
     print("=" * 80)
-    print("FEATURE TENSOR ANALYSIS")
+    print("OUTLIER INVESTIGATION")
     print("=" * 80)
     
-    results = {}
     n_rows, n_features = x.shape
+    print(f"\nShape: {x.shape}")
     
-    # Basic info
-    print(f"\nFull shape: {x.shape}")
-    print(f"Dtype: {x.dtype}")
-    print(f"Device: {x.device}")
-    
-    # Convert to float for analysis if needed
-    if x.dtype != torch.float32 and x.dtype != torch.float64:
-        x = x.float()
-    
-    # Sample for detailed statistics
+    # Sample for analysis
     if n_rows > sample_size:
-        print(f"\nUsing random sample of {sample_size:,} rows for detailed statistics")
         indices = torch.randperm(n_rows)[:sample_size]
         x_sample = x[indices]
+        print(f"Using sample of {sample_size:,} rows")
     else:
         x_sample = x
     
-    # Per-feature statistics
+    # Convert to float64 for better precision
+    if x.dtype != torch.float64:
+        x = x.double()
+        x_sample = x_sample.double()
+    
     print("\n" + "=" * 80)
-    print("PER-FEATURE STATISTICS")
+    print("EXTREME VALUE ANALYSIS")
     print("=" * 80)
     
-    for i in range(n_features):
-        # Use full data for basic stats (more efficient)
-        feat_full = x[:, i]
-        
-        # Basic stats on full data
-        min_val = feat_full.min().item()
-        max_val = feat_full.max().item()
-        mean_val = feat_full.mean().item()
-        std_val = feat_full.std().item()
-        
-        # Stats on sample
-        feat_sample = x_sample[:, i]
-        
-        # Check for special values (on sample)
-        n_nan = torch.isnan(feat_sample).sum().item()
-        n_inf = torch.isinf(feat_sample).sum().item()
-        n_zero = (feat_sample == 0).sum().item()
-        
-        # Estimate unique values (on sample)
-        n_unique = len(torch.unique(feat_sample))
-        
-        # Distribution checks (on sample, using numpy for memory efficiency)
-        feat_np = feat_sample.cpu().numpy()
-        feat_np = feat_np[~np.isnan(feat_np) & ~np.isinf(feat_np)]  # Remove NaN/Inf
-        
-        if len(feat_np) > 0:
-            median_val = np.median(feat_np)
-            q25 = np.percentile(feat_np, 25)
-            q75 = np.percentile(feat_np, 75)
-            iqr = q75 - q25
-        else:
-            median_val = q25 = q75 = iqr = 0
-        
-        print(f"\n--- Feature {i} ---")
-        print(f"  Range: [{min_val:.6e}, {max_val:.6e}]")
-        print(f"  Mean: {mean_val:.6e}, Std: {std_val:.6e}")
-        print(f"  Median: {median_val:.6e}")
-        print(f"  Q25: {q25:.6e}, Q75: {q75:.6e}, IQR: {iqr:.6e}")
-        print(f"  Unique values (sample): {n_unique}")
-        print(f"  Zeros (sample): {n_zero} ({100*n_zero/len(feat_sample):.2f}%)")
-        
-        if n_nan > 0:
-            print(f"  ⚠️  NaN values (sample): {n_nan}")
-        if n_inf > 0:
-            print(f"  ⚠️  Inf values (sample): {n_inf}")
-        
-        # Detect feature type
-        if n_unique == 2:
-            unique_vals = torch.unique(feat_sample)
-            print(f"  → Type: BINARY (values: {unique_vals.tolist()})")
-        elif n_unique <= 10:
-            unique_vals = torch.unique(feat_sample)
-            print(f"  → Type: CATEGORICAL (values: {unique_vals.tolist()[:10]})")
-        elif std_val == 0:
-            print(f"  → Type: CONSTANT (value: {mean_val:.6e})")
-        elif abs(std_val) < 1e-6:
-            print(f"  → Type: NEAR-CONSTANT")
-        else:
-            # Check scale
-            range_val = abs(max_val - min_val)
-            if range_val > 1000:
-                print(f"  → Type: CONTINUOUS (LARGE SCALE, range={range_val:.2e})")
-            elif range_val < 0.01:
-                print(f"  → Type: CONTINUOUS (SMALL SCALE, range={range_val:.2e})")
-            else:
-                print(f"  → Type: CONTINUOUS (range={range_val:.6f})")
-            
-            # Check distribution
-            if std_val > 0 and abs(mean_val - median_val) / (std_val + 1e-8) > 1:
-                print(f"  → Distribution: SKEWED (|mean-median|/std = {abs(mean_val - median_val) / (std_val + 1e-8):.2f})")
-            else:
-                print(f"  → Distribution: ROUGHLY SYMMETRIC")
-            
-            # Check for outliers
-            if iqr > 0:
-                outlier_threshold = 3 * iqr
-                if (max_val - q75) > outlier_threshold or (q25 - min_val) > outlier_threshold:
-                    print(f"  → Possible OUTLIERS detected")
-    
-    # Global statistics
-    print("\n" + "=" * 80)
-    print("GLOBAL STATISTICS")
-    print("=" * 80)
-    
-    global_min = x.min().item()
-    global_max = x.max().item()
-    global_mean = x.mean().item()
-    global_std = x.std().item()
-    
-    print(f"\nGlobal min: {global_min:.6e}")
-    print(f"Global max: {global_max:.6e}")
-    print(f"Global mean: {global_mean:.6e}")
-    print(f"Global std: {global_std:.6e}")
-    print(f"Total NaN (sample): {torch.isnan(x_sample).sum().item()}")
-    print(f"Total Inf (sample): {torch.isinf(x_sample).sum().item()}")
-    
-    # Check if already normalized
-    print("\n" + "=" * 80)
-    print("NORMALIZATION CHECKS")
-    print("=" * 80)
-    
-    if abs(global_min) < 1e-6 and abs(global_max - 1) < 1e-6:
-        print("\n✓ Data appears to be in [0, 1] range")
-    elif abs(global_min + 1) < 1e-6 and abs(global_max - 1) < 1e-6:
-        print("\n✓ Data appears to be in [-1, 1] range")
-    elif abs(global_mean) < 0.1 and abs(global_std - 1) < 0.1:
-        print("\n✓ Data appears to be standardized (mean≈0, std≈1)")
-    else:
-        print("\n✗ Data is NOT normalized")
-        print(f"   Range: [{global_min:.6e}, {global_max:.6e}]")
-    
-    # Feature scale comparison
-    print("\n" + "=" * 80)
-    print("SCALE COMPARISON")
-    print("=" * 80)
-    
-    ranges = []
-    stds = []
     for i in range(n_features):
         feat = x[:, i]
-        ranges.append((feat.max() - feat.min()).item())
-        stds.append(feat.std().item())
+        feat_sample = x_sample[:, i]
+        
+        # Remove zeros for non-zero analysis
+        feat_nonzero = feat[feat != 0]
+        
+        print(f"\n--- Feature {i} ---")
+        print(f"  Total values: {len(feat):,}")
+        print(f"  Zeros: {(feat == 0).sum().item():,} ({100*(feat == 0).sum().item()/len(feat):.2f}%)")
+        print(f"  Non-zero values: {len(feat_nonzero):,}")
+        
+        if len(feat_nonzero) > 0:
+            min_nz = feat_nonzero.min().item()
+            max_nz = feat_nonzero.max().item()
+            mean_nz = feat_nonzero.mean().item()
+            median_nz = feat_nonzero.median().item()
+            
+            print(f"\n  Non-zero stats:")
+            print(f"    Min: {min_nz:.6e}")
+            print(f"    Max: {max_nz:.6e}")
+            print(f"    Mean: {mean_nz:.6e}")
+            print(f"    Median: {median_nz:.6e}")
+            
+            # Percentiles on sample (non-zero only)
+            feat_nz_sample = feat_sample[feat_sample != 0]
+            if len(feat_nz_sample) > 0:
+                feat_np = feat_nz_sample.cpu().numpy()
+                
+                percentiles = [50, 75, 90, 95, 99, 99.9, 99.99, 100]
+                print(f"\n  Percentiles (non-zero):")
+                for p in percentiles:
+                    val = np.percentile(feat_np, p)
+                    print(f"    {p:>6.2f}%: {val:.6e}")
+                
+                # Count extreme values
+                thresholds = [1e10, 1e50, 1e100, 1e200, 1e300]
+                print(f"\n  Values exceeding thresholds:")
+                for thresh in thresholds:
+                    count = (feat_nonzero > thresh).sum().item()
+                    if count > 0:
+                        pct = 100 * count / len(feat_nonzero)
+                        print(f"    > {thresh:.0e}: {count:,} ({pct:.4f}%)")
+                
+                # Check if values look like they might be corrupted
+                if max_nz > 1e100:
+                    print(f"\n  ⚠️  EXTREMELY LARGE VALUES DETECTED!")
+                    print(f"      Max value {max_nz:.2e} suggests possible:")
+                    print(f"      - Data corruption")
+                    print(f"      - Overflow during computation")
+                    print(f"      - Missing value encoding gone wrong")
+                    print(f"      - Need for log transformation")
+        else:
+            print(f"  All zeros!")
     
-    max_range = max(ranges)
-    min_range = min([r for r in ranges if r > 0])
-    max_std = max(stds)
-    min_std = min([s for s in stds if s > 0])
-    
-    print(f"\nRange across features: {min_range:.6e} to {max_range:.6e}")
-    print(f"Ratio (max/min range): {max_range/min_range:.2e}")
-    print(f"\nStd across features: {min_std:.6e} to {max_std:.6e}")
-    print(f"Ratio (max/min std): {max_std/min_std:.2e}")
-    
-    if max_range/min_range > 100:
-        print("\n⚠️  Large scale differences detected! Normalization strongly recommended.")
-    
+    # Overall recommendations
     print("\n" + "=" * 80)
-    print("RECOMMENDATIONS WILL FOLLOW")
+    print("DIAGNOSTIC QUESTIONS")
     print("=" * 80)
-    print("\nShare this complete output and I'll provide:")
-    print("• Specific normalization method")
-    print("• Per-feature or global approach")
-    print("• Handling of special features")
-    print("• Complete implementation code")
+    print("\n1. Are these extremely large values (1e+304) expected in your data?")
+    print("   - If NO: They might be corrupted/missing value indicators")
+    print("   - If YES: You likely need log transformation or clipping")
+    print("\n2. What does this data represent?")
+    print("   - Counts/frequencies? → Log transform + StandardScaler")
+    print("   - Measurements? → Check if large values are errors")
+    print("   - Already transformed? → May need to undo transformation")
+    print("\n3. Can you tolerate removing/clipping extreme outliers?")
+    print("   - Option A: Clip at 99.9th percentile")
+    print("   - Option B: Log transform (log(x + 1) for zeros)")
+    print("   - Option C: Robust scaling (ignore outliers)")
     
-    return results
+    return None
 
-
-# Example usage:
-print("=" * 80)
-print("INSTRUCTIONS")
-print("=" * 80)
-print("""
-To use this script with your 16M x 43 tensor:
-
-    results = analyze_features(x)
-
-This will automatically sample 500k rows for detailed stats while using
-all rows for basic statistics (min, max, mean, std).
-
-If you want a different sample size:
-    results = analyze_features(x, sample_size=1000000)
-
-Then share the complete output!
-""")
+# Run this
+print("Run: investigate_outliers(x)")
+print("\nThen answer the diagnostic questions above!")
