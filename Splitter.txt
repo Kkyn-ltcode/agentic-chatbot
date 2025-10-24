@@ -3,111 +3,135 @@ import numpy as np
 
 class NetworkFlowNormalizer:
     """
-    Robust normalization for network flow data with extreme outliers.
-    Handles zeros, skewed distributions, and values ranging to 1e+304.
+    Robust per-feature normalization for network flow data.
+    Each feature is normalized independently to handle different scales.
     """
     
-    def __init__(self, method='log_standard', clip_percentile=99.9):
+    def __init__(self, method='log_standard', clip_percentile=99.9, epsilon=1e-8):
         """
         Args:
-            method: 'log_standard', 'robust', 'clip_standard', or 'minmax_log'
+            method: 'log_standard', 'robust', 'clip_standard', or 'standard'
             clip_percentile: percentile to clip at (e.g., 99.9)
+            epsilon: small value to avoid division by zero
         """
         self.method = method
         self.clip_percentile = clip_percentile
+        self.epsilon = epsilon
         self.stats = {}
         
     def fit(self, x, sample_size=500000):
         """
-        Compute statistics needed for normalization.
+        Compute per-feature statistics for normalization.
         
         Args:
-            x: torch.Tensor of shape (N, 43)
-            sample_size: number of rows to sample for percentile computation
+            x: torch.Tensor of shape (N, F) where F=43 features
+            sample_size: rows to sample for percentile computation
         """
-        print(f"Computing normalization statistics using method: {self.method}")
+        print(f"[Normalizer] Method: {self.method}")
+        print(f"[Normalizer] Input shape: {x.shape}")
+        
         n_rows, n_features = x.shape
         
-        # Sample for percentile computation (memory efficient)
+        # Sample for percentile computation
         if n_rows > sample_size:
             indices = torch.randperm(n_rows)[:sample_size]
             x_sample = x[indices]
+            print(f"[Normalizer] Using {sample_size:,} samples for stats")
         else:
             x_sample = x
         
-        x_sample_np = x_sample.cpu().numpy()
-        
+        # Process each feature independently
         for i in range(n_features):
-            feat = x[:, i]
-            feat_sample = x_sample_np[:, i]
+            feat_full = x[:, i]
+            feat_sample = x_sample[:, i]
             
-            # Store per-feature stats
-            self.stats[i] = {}
+            self.stats[i] = {'feature_id': i}
+            
+            # Check if feature is constant or all zeros
+            if feat_full.std() < self.epsilon:
+                self.stats[i]['type'] = 'constant'
+                self.stats[i]['value'] = feat_full.mean().item()
+                continue
             
             if self.method == 'log_standard':
-                # Compute stats on log-transformed non-zero values
-                feat_nonzero = feat[feat > 0]
+                # Per-feature: log(1+x) then standardize
+                # This handles each feature's scale independently
+                feat_nonzero = feat_full[feat_full > 0]
+                
                 if len(feat_nonzero) > 0:
-                    log_feat = torch.log1p(feat_nonzero)  # log(1 + x)
+                    log_feat = torch.log1p(feat_nonzero)
                     self.stats[i]['mean'] = log_feat.mean().item()
                     self.stats[i]['std'] = log_feat.std().item()
+                    
+                    # Ensure std is not too small
+                    if self.stats[i]['std'] < self.epsilon:
+                        self.stats[i]['std'] = 1.0
                 else:
                     self.stats[i]['mean'] = 0.0
                     self.stats[i]['std'] = 1.0
+                
+                self.stats[i]['type'] = 'log_standard'
                     
             elif self.method == 'robust':
-                # Use median and IQR (immune to outliers)
-                feat_sample_nonzero = feat_sample[feat_sample > 0]
-                if len(feat_sample_nonzero) > 0:
-                    self.stats[i]['median'] = np.median(feat_sample_nonzero)
-                    self.stats[i]['q25'] = np.percentile(feat_sample_nonzero, 25)
-                    self.stats[i]['q75'] = np.percentile(feat_sample_nonzero, 75)
-                    self.stats[i]['iqr'] = self.stats[i]['q75'] - self.stats[i]['q25']
-                    if self.stats[i]['iqr'] < 1e-6:
-                        self.stats[i]['iqr'] = 1.0
+                # Per-feature: (x - median) / IQR
+                feat_sample_np = feat_sample.cpu().numpy()
+                feat_nonzero = feat_sample_np[feat_sample_np > 0]
+                
+                if len(feat_nonzero) > 100:  # Need enough samples
+                    median = np.median(feat_nonzero)
+                    q25 = np.percentile(feat_nonzero, 25)
+                    q75 = np.percentile(feat_nonzero, 75)
+                    iqr = q75 - q25
+                    
+                    self.stats[i]['median'] = float(median)
+                    self.stats[i]['iqr'] = float(iqr) if iqr > self.epsilon else 1.0
                 else:
                     self.stats[i]['median'] = 0.0
                     self.stats[i]['iqr'] = 1.0
+                
+                self.stats[i]['type'] = 'robust'
                     
             elif self.method == 'clip_standard':
-                # Clip at percentile, then standardize
-                if len(feat_sample[feat_sample > 0]) > 0:
-                    clip_val = np.percentile(feat_sample, self.clip_percentile)
-                    self.stats[i]['clip_val'] = clip_val
+                # Per-feature: clip outliers then standardize
+                feat_sample_np = feat_sample.cpu().numpy()
+                
+                if len(feat_sample_np[feat_sample_np > 0]) > 0:
+                    clip_val = np.percentile(feat_sample_np, self.clip_percentile)
+                    self.stats[i]['clip_val'] = float(clip_val)
                     
-                    # Compute mean/std on clipped full data
-                    feat_clipped = torch.clamp(feat, max=clip_val)
+                    # Compute mean/std on clipped data
+                    feat_clipped = torch.clamp(feat_full, max=clip_val)
                     self.stats[i]['mean'] = feat_clipped.mean().item()
                     self.stats[i]['std'] = feat_clipped.std().item()
+                    
+                    if self.stats[i]['std'] < self.epsilon:
+                        self.stats[i]['std'] = 1.0
                 else:
                     self.stats[i]['clip_val'] = 1.0
                     self.stats[i]['mean'] = 0.0
                     self.stats[i]['std'] = 1.0
-                    
-            elif self.method == 'minmax_log':
-                # Log transform then scale to [0, 1]
-                feat_nonzero = feat[feat > 0]
-                if len(feat_nonzero) > 0:
-                    log_feat = torch.log1p(feat_nonzero)
-                    self.stats[i]['log_min'] = log_feat.min().item()
-                    self.stats[i]['log_max'] = log_feat.max().item()
-                    self.stats[i]['log_range'] = self.stats[i]['log_max'] - self.stats[i]['log_min']
-                    if self.stats[i]['log_range'] < 1e-6:
-                        self.stats[i]['log_range'] = 1.0
-                else:
-                    self.stats[i]['log_min'] = 0.0
-                    self.stats[i]['log_max'] = 1.0
-                    self.stats[i]['log_range'] = 1.0
+                
+                self.stats[i]['type'] = 'clip_standard'
+                
+            elif self.method == 'standard':
+                # Per-feature: simple (x - mean) / std
+                self.stats[i]['mean'] = feat_full.mean().item()
+                self.stats[i]['std'] = feat_full.std().item()
+                
+                if self.stats[i]['std'] < self.epsilon:
+                    self.stats[i]['std'] = 1.0
+                
+                self.stats[i]['type'] = 'standard'
         
-        print(f"✓ Fitted on {n_features} features")
+        print(f"[Normalizer] ✓ Fitted on {n_features} features")
         return self
     
     def transform(self, x):
         """
-        Apply normalization to data.
+        Apply per-feature normalization.
         
         Args:
-            x: torch.Tensor of shape (N, 43)
+            x: torch.Tensor of shape (N, F)
             
         Returns:
             Normalized tensor of same shape
@@ -116,41 +140,40 @@ class NetworkFlowNormalizer:
         n_features = x.shape[1]
         
         for i in range(n_features):
-            feat = x[:, i]
+            feat = x[:, i].float()
+            stat = self.stats[i]
+            
+            if stat.get('type') == 'constant':
+                # Feature is constant, set to zero
+                x_norm[:, i] = 0.0
+                continue
             
             if self.method == 'log_standard':
-                # log(1 + x), then standardize
+                # Apply log(1+x) then standardize PER FEATURE
                 feat_log = torch.log1p(feat)
-                mean = self.stats[i]['mean']
-                std = self.stats[i]['std']
-                if std > 1e-6:
-                    x_norm[:, i] = (feat_log - mean) / std
-                else:
-                    x_norm[:, i] = feat_log - mean
-                    
+                mean = stat['mean']
+                std = stat['std']
+                x_norm[:, i] = (feat_log - mean) / std
+                
             elif self.method == 'robust':
-                # (x - median) / IQR
-                median = self.stats[i]['median']
-                iqr = self.stats[i]['iqr']
+                # Apply robust scaling PER FEATURE
+                median = stat['median']
+                iqr = stat['iqr']
                 x_norm[:, i] = (feat - median) / iqr
                 
             elif self.method == 'clip_standard':
-                # Clip then standardize
-                clip_val = self.stats[i]['clip_val']
+                # Clip then standardize PER FEATURE
+                clip_val = stat['clip_val']
                 feat_clipped = torch.clamp(feat, max=clip_val)
-                mean = self.stats[i]['mean']
-                std = self.stats[i]['std']
-                if std > 1e-6:
-                    x_norm[:, i] = (feat_clipped - mean) / std
-                else:
-                    x_norm[:, i] = feat_clipped - mean
-                    
-            elif self.method == 'minmax_log':
-                # Log then scale to [0, 1]
-                feat_log = torch.log1p(feat)
-                log_min = self.stats[i]['log_min']
-                log_range = self.stats[i]['log_range']
-                x_norm[:, i] = (feat_log - log_min) / log_range
+                mean = stat['mean']
+                std = stat['std']
+                x_norm[:, i] = (feat_clipped - mean) / std
+                
+            elif self.method == 'standard':
+                # Simple standardization PER FEATURE
+                mean = stat['mean']
+                std = stat['std']
+                x_norm[:, i] = (feat - mean) / std
         
         return x_norm
     
@@ -158,58 +181,95 @@ class NetworkFlowNormalizer:
         """Fit and transform in one step."""
         self.fit(x, sample_size)
         return self.transform(x)
+    
+    def print_summary(self):
+        """Print summary of normalization statistics."""
+        print("\n" + "=" * 80)
+        print("NORMALIZATION SUMMARY")
+        print("=" * 80)
+        
+        for i, stat in self.stats.items():
+            print(f"\nFeature {i}:")
+            if stat.get('type') == 'constant':
+                print(f"  Type: CONSTANT (value={stat['value']:.6e})")
+            elif stat.get('type') == 'log_standard':
+                print(f"  Type: LOG + STANDARD")
+                print(f"  Log mean: {stat['mean']:.6f}, Log std: {stat['std']:.6f}")
+            elif stat.get('type') == 'robust':
+                print(f"  Type: ROBUST")
+                print(f"  Median: {stat['median']:.6e}, IQR: {stat['iqr']:.6e}")
+            elif stat.get('type') == 'clip_standard':
+                print(f"  Type: CLIP + STANDARD")
+                print(f"  Clip at: {stat['clip_val']:.6e}")
+                print(f"  Mean: {stat['mean']:.6f}, Std: {stat['std']:.6f}")
 
 
-# RECOMMENDED USAGE FOR NETWORK FLOW DATA
+def verify_normalization(x_original, x_normalized):
+    """Helper to verify normalization worked correctly."""
+    print("\n" + "=" * 80)
+    print("NORMALIZATION VERIFICATION")
+    print("=" * 80)
+    
+    print(f"\nOriginal data:")
+    print(f"  Shape: {x_original.shape}")
+    print(f"  Min: {x_original.min().item():.6e}")
+    print(f"  Max: {x_original.max().item():.6e}")
+    print(f"  Mean: {x_original.mean().item():.6e}")
+    print(f"  Std: {x_original.std().item():.6e}")
+    
+    print(f"\nNormalized data:")
+    print(f"  Shape: {x_normalized.shape}")
+    print(f"  Min: {x_normalized.min().item():.6f}")
+    print(f"  Max: {x_normalized.max().item():.6f}")
+    print(f"  Mean: {x_normalized.mean().item():.6f}")
+    print(f"  Std: {x_normalized.std().item():.6f}")
+    print(f"  NaN count: {torch.isnan(x_normalized).sum().item()}")
+    print(f"  Inf count: {torch.isinf(x_normalized).sum().item()}")
+    
+    # Per-feature check
+    print(f"\nPer-feature stats (normalized):")
+    for i in range(min(5, x_normalized.shape[1])):  # Show first 5
+        feat = x_normalized[:, i]
+        print(f"  Feature {i}: mean={feat.mean().item():.4f}, "
+              f"std={feat.std().item():.4f}, "
+              f"range=[{feat.min().item():.4f}, {feat.max().item():.4f}]")
+    
+    if x_normalized.shape[1] > 5:
+        print(f"  ... and {x_normalized.shape[1] - 5} more features")
+    
+    # Check if normalization looks good
+    print("\n" + "=" * 80)
+    mean_val = abs(x_normalized.mean().item())
+    std_val = x_normalized.std().item()
+    
+    if mean_val < 1.0 and 0.5 < std_val < 2.0:
+        print("✓ Normalization looks GOOD!")
+        print("  Mean near 0, std near 1 - ready for GNN training")
+    elif torch.isnan(x_normalized).sum() > 0 or torch.isinf(x_normalized).sum() > 0:
+        print("✗ Normalization has NaN/Inf values - needs fixing")
+    else:
+        print("⚠ Normalization completed but check the ranges")
+        print("  Values might be okay for GNNs but unusual")
+
+
+# USAGE EXAMPLE
 print("=" * 80)
-print("RECOMMENDED APPROACH FOR NETWORK FLOW DATA")
+print("USAGE FOR YOUR 16M x 43 NETWORK FLOW DATA")
 print("=" * 80)
 print("""
-Network flow data (bytes, packets, duration, etc.) is typically:
-- Right-skewed with many small values and few huge ones
-- Contains many zeros (no traffic)
-- Spans many orders of magnitude
-
-BEST METHOD: 'log_standard'
-- Handles zeros naturally with log1p (log(1 + x))
-- Compresses extreme values
-- Standard for network traffic analysis
-""")
-
-print("\n" + "=" * 80)
-print("USAGE")
-print("=" * 80)
-print("""
-# Option 1: Log + Standardization (RECOMMENDED for network flow)
+# Step 1: Normalize
 normalizer = NetworkFlowNormalizer(method='log_standard')
 x_normalized = normalizer.fit_transform(x)
 
-# Option 2: Robust scaling (if you want to preserve outliers)
-normalizer = NetworkFlowNormalizer(method='robust')
-x_normalized = normalizer.fit_transform(x)
+# Step 2: Verify
+verify_normalization(x, x_normalized)
 
-# Option 3: Clip extreme outliers then standardize
-normalizer = NetworkFlowNormalizer(method='clip_standard', clip_percentile=99.9)
-x_normalized = normalizer.fit_transform(x)
+# Step 3: (Optional) See detailed stats per feature
+normalizer.print_summary()
 
-# Option 4: Log + MinMax [0,1] scaling
-normalizer = NetworkFlowNormalizer(method='minmax_log')
-x_normalized = normalizer.fit_transform(x)
-
-# Then use x_normalized in your graph model
-""")
-
-print("\n" + "=" * 80)
-print("VERIFICATION")
-print("=" * 80)
-print("""
-After normalization, check the result:
-
-x_norm = normalizer.fit_transform(x)
-print(f"Normalized - Min: {x_norm.min().item():.6f}")
-print(f"Normalized - Max: {x_norm.max().item():.6f}")
-print(f"Normalized - Mean: {x_norm.mean().item():.6f}")
-print(f"Normalized - Std: {x_norm.std().item():.6f}")
-print(f"NaN count: {torch.isnan(x_norm).sum().item()}")
-print(f"Inf count: {torch.isinf(x_norm).sum().item()}")
+Expected output after verification:
+  Mean: ~0.0 (between -1 and 1)
+  Std: ~1.0 (between 0.5 and 2)
+  Min/Max: reasonable (e.g., -5 to 5)
+  No NaN or Inf values
 """)
