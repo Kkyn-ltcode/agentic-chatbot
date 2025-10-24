@@ -1,28 +1,33 @@
-import torch
+# STEP 3: Handle each feature appropriately
+x_normalized = torch.zeros_like(x)
 
-# Load your raw features
-x = ...  # Your (16M, 43) tensor
-
-print("Original stats:")
-print(f"Min: {x.min():.2e}, Max: {x.max():.2e}, Median: {x.median():.2e}")
-
-# STEP 1: Remove catastrophic outliers (clip to reasonable float range)
-print("\nClipping catastrophic values...")
-x = torch.clamp(x, min=0, max=1e10)  # Cap at 10 billion
-
-print("After clipping:")
-print(f"Min: {x.min():.2e}, Max: {x.max():.2e}, Median: {x.median():.2e}")
-print(f"Mean: {x.mean():.2e}, Std: {x.std():.2e}")
-
-# STEP 2: Now run the analysis again
-print("\n" + "="*60)
-print("RE-ANALYZING AFTER CLIPPING:")
-print("="*60)
-
-# Re-run per-feature analysis
 for i in range(x.shape[1]):
     feat = x[:, i]
-    zeros_pct = (feat == 0).sum().item() / feat.shape[0] * 100
     
-    print(f"Feat {i}: min={feat.min():.2e}, max={feat.max():.2e}, "
-          f"mean={feat.mean():.2e}, std={feat.std():.2e}, zeros={zeros_pct:.1f}%")
+    # Skip constant/nearly constant features
+    if feat.std() < 1e-10:
+        print(f"Feature {i}: constant, setting to 0")
+        x_normalized[:, i] = 0
+        continue
+    
+    # For features with >80% zeros, use binary indicator
+    zeros_pct = (feat == 0).sum() / feat.shape[0]
+    if zeros_pct > 0.8:
+        print(f"Feature {i}: {zeros_pct*100:.1f}% zeros, binarizing")
+        x_normalized[:, i] = (feat > 0).float()
+        continue
+    
+    # For positive features with large range, use log
+    if feat.min() >= 0 and feat.max() / (feat.std() + 1e-10) > 100:
+        print(f"Feature {i}: log-transforming")
+        feat_log = torch.log1p(feat)  # log(1 + x)
+        x_normalized[:, i] = (feat_log - feat_log.mean()) / (feat_log.std() + 1e-8)
+    else:
+        # Standard normalization with robust clipping
+        print(f"Feature {i}: standard scaling")
+        feat_norm = (feat - feat.mean()) / (feat.std() + 1e-8)
+        x_normalized[:, i] = torch.clamp(feat_norm, min=-5, max=5)
+
+print("\nFinal normalized stats:")
+print(f"Min: {x_normalized.min():.2f}, Max: {x_normalized.max():.2f}")
+print(f"Mean: {x_normalized.mean():.2f}, Std: {x_normalized.std():.2f}")
