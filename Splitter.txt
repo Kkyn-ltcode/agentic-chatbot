@@ -1,148 +1,28 @@
 import torch
-import numpy as np
 
 # Load your raw features
 x = ...  # Your (16M, 43) tensor
 
+print("Original stats:")
+print(f"Min: {x.min():.2e}, Max: {x.max():.2e}, Median: {x.median():.2e}")
+
+# STEP 1: Remove catastrophic outliers (clip to reasonable float range)
+print("\nClipping catastrophic values...")
+x = torch.clamp(x, min=0, max=1e10)  # Cap at 10 billion
+
+print("After clipping:")
+print(f"Min: {x.min():.2e}, Max: {x.max():.2e}, Median: {x.median():.2e}")
+print(f"Mean: {x.mean():.2e}, Std: {x.std():.2e}")
+
+# STEP 2: Now run the analysis again
+print("\n" + "="*60)
+print("RE-ANALYZING AFTER CLIPPING:")
 print("="*60)
-print("FEATURE ANALYSIS - RAW DATA")
-print("="*60)
 
-# Overall statistics
-print(f"\nShape: {x.shape}")
-print(f"Dtype: {x.dtype}")
-print(f"\nOverall Stats:")
-print(f"  Min: {x.min().item():.6f}")
-print(f"  Max: {x.max().item():.6f}")
-print(f"  Mean: {x.mean().item():.6f}")
-print(f"  Std: {x.std().item():.6f}")
-print(f"  Median: {x.median().item():.6f}")
-
-# Check for problematic values
-print(f"\nData Quality:")
-print(f"  NaN count: {torch.isnan(x).sum().item()}")
-print(f"  Inf count: {torch.isinf(x).sum().item()}")
-print(f"  Zero count: {(x == 0).sum().item()} ({(x == 0).sum().item() / x.numel() * 100:.2f}%)")
-print(f"  Negative count: {(x < 0).sum().item()} ({(x < 0).sum().item() / x.numel() * 100:.2f}%)")
-
-# Per-feature analysis
-print(f"\n{'='*60}")
-print("PER-FEATURE ANALYSIS (all 43 features):")
-print(f"{'='*60}")
-print(f"{'Feat':<6} {'Min':<12} {'Max':<12} {'Mean':<12} {'Std':<12} {'Zeros%':<10} {'Q99':<12}")
-print("-"*80)
-
+# Re-run per-feature analysis
 for i in range(x.shape[1]):
     feat = x[:, i]
     zeros_pct = (feat == 0).sum().item() / feat.shape[0] * 100
-    q99 = torch.quantile(feat, 0.99).item()
     
-    print(f"{i:<6} {feat.min().item():<12.4f} {feat.max().item():<12.4f} "
-          f"{feat.mean().item():<12.4f} {feat.std().item():<12.4f} "
-          f"{zeros_pct:<10.2f} {q99:<12.4f}")
-
-# Distribution analysis
-print(f"\n{'='*60}")
-print("DISTRIBUTION ANALYSIS:")
-print(f"{'='*60}")
-
-for i in range(x.shape[1]):
-    feat = x[:, i]
-    
-    # Percentiles
-    q01 = torch.quantile(feat, 0.01).item()
-    q25 = torch.quantile(feat, 0.25).item()
-    q50 = torch.quantile(feat, 0.50).item()
-    q75 = torch.quantile(feat, 0.75).item()
-    q99 = torch.quantile(feat, 0.99).item()
-    
-    # IQR for outlier detection
-    iqr = q75 - q25
-    lower_fence = q25 - 1.5 * iqr
-    upper_fence = q75 + 1.5 * iqr
-    outliers = ((feat < lower_fence) | (feat > upper_fence)).sum().item()
-    outlier_pct = outliers / feat.shape[0] * 100
-    
-    # Check if log-scale makes sense
-    if feat.min() > 0:
-        log_range = np.log10(feat.max().item()) - np.log10(feat.min().item())
-        log_suitable = "YES" if log_range > 3 else "no"
-    else:
-        log_suitable = "N/A (has ≤0)"
-    
-    print(f"\nFeature {i}:")
-    print(f"  Percentiles: 1%={q01:.4f}, 25%={q25:.4f}, 50%={q50:.4f}, 75%={q75:.4f}, 99%={q99:.4f}")
-    print(f"  IQR: {iqr:.4f}")
-    print(f"  Outliers (IQR method): {outliers:,} ({outlier_pct:.2f}%)")
-    print(f"  Log-scale suitable: {log_suitable}")
-    print(f"  Range span: {feat.max().item() / (feat.min().item() + 1e-10):.2f}x")
-
-# Identify highly skewed features
-print(f"\n{'='*60}")
-print("SKEWNESS & SCALE ANALYSIS:")
-print(f"{'='*60}")
-
-for i in range(x.shape[1]):
-    feat = x[:, i]
-    
-    # Compute skewness manually
-    mean = feat.mean()
-    std = feat.std()
-    if std > 1e-10:
-        skewness = ((feat - mean) ** 3).mean() / (std ** 3)
-        skewness = skewness.item()
-    else:
-        skewness = 0.0
-    
-    # Coefficient of variation
-    cv = (std / (mean.abs() + 1e-10)).item()
-    
-    # Max/mean ratio (another scale indicator)
-    max_mean_ratio = feat.max().item() / (feat.mean().abs().item() + 1e-10)
-    
-    print(f"Feature {i}: skewness={skewness:.2f}, CV={cv:.2f}, max/mean={max_mean_ratio:.2f}")
-
-# Feature correlations with extreme values
-print(f"\n{'='*60}")
-print("FEATURES WITH EXTREME RANGES:")
-print(f"{'='*60}")
-
-extreme_features = []
-for i in range(x.shape[1]):
-    feat = x[:, i]
-    range_span = feat.max().item() - feat.min().item()
-    
-    if range_span > 1000 or feat.max().item() > 10000:
-        extreme_features.append(i)
-        print(f"Feature {i}: range={range_span:.2f}, min={feat.min().item():.2f}, max={feat.max().item():.2f}")
-
-if not extreme_features:
-    print("No extreme-range features detected.")
-
-# Suggested normalization strategy
-print(f"\n{'='*60}")
-print("NORMALIZATION RECOMMENDATIONS:")
-print(f"{'='*60}")
-
-for i in range(x.shape[1]):
-    feat = x[:, i]
-    
-    # Decide strategy
-    if (feat == 0).sum() / feat.shape[0] > 0.9:
-        strategy = "SKIP (>90% zeros)"
-    elif feat.min() > 0 and feat.max() / feat.min() > 1000:
-        strategy = "LOG-TRANSFORM + StandardScaler"
-    elif feat.std() < 1e-6:
-        strategy = "CONSTANT - REMOVE"
-    elif ((feat < 0).sum() / feat.shape[0]) > 0.4:
-        strategy = "StandardScaler (has negatives)"
-    elif feat.max() > 100 * feat.std():
-        strategy = "RobustScaler (has outliers)"
-    else:
-        strategy = "StandardScaler"
-    
-    print(f"Feature {i}: {strategy}")
-
-print(f"\n{'='*60}")
-print("ANALYSIS COMPLETE")
-print(f"{'='*60}")
+    print(f"Feat {i}: min={feat.min():.2e}, max={feat.max():.2e}, "
+          f"mean={feat.mean():.2e}, std={feat.std():.2e}, zeros={zeros_pct:.1f}%")
