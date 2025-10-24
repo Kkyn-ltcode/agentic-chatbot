@@ -1,33 +1,106 @@
-# STEP 3: Handle each feature appropriately
-x_normalized = torch.zeros_like(x)
+import torch
+import numpy as np
+
+# Assume x is your (16M, 43) tensor on CPU
+# If on GPU, move to CPU first: x = x.cpu()
+
+print("="*60)
+print("MEMORY-EFFICIENT FEATURE ANALYSIS")
+print("="*60)
+
+print(f"\nShape: {x.shape}")
+print(f"Device: {x.device}")
+
+# Overall stats (efficient)
+print(f"\nOverall Stats:")
+print(f"  Min: {x.min().item():.2f}")
+print(f"  Max: {x.max().item():.2f}")
+print(f"  Mean: {x.mean().item():.2f}")
+print(f"  Std: {x.std().item():.2f}")
+
+# Use numpy for median (more memory efficient)
+x_np = x.numpy() if x.device.type == 'cpu' else x.cpu().numpy()
+print(f"  Median: {np.median(x_np):.2f}")
+
+# Data quality
+print(f"\nData Quality:")
+print(f"  NaN count: {np.isnan(x_np).sum()}")
+print(f"  Inf count: {np.isinf(x_np).sum()}")
+print(f"  Zero count: {(x_np == 0).sum()} ({(x_np == 0).sum() / x_np.size * 100:.2f}%)")
+print(f"  Negative count: {(x_np < 0).sum()} ({(x_np < 0).sum() / x_np.size * 100:.2f}%)")
+
+# Per-feature analysis (memory efficient)
+print(f"\n{'='*60}")
+print("PER-FEATURE ANALYSIS:")
+print(f"{'='*60}")
+print(f"{'Feat':<6} {'Min':<10} {'Max':<10} {'Mean':<10} {'Std':<10} {'Zeros%':<10}")
+print("-"*60)
 
 for i in range(x.shape[1]):
-    feat = x[:, i]
+    # Process one feature at a time
+    feat = x_np[:, i]
     
-    # Skip constant/nearly constant features
-    if feat.std() < 1e-10:
-        print(f"Feature {i}: constant, setting to 0")
-        x_normalized[:, i] = 0
-        continue
+    zeros_pct = (feat == 0).sum() / feat.shape[0] * 100
     
-    # For features with >80% zeros, use binary indicator
-    zeros_pct = (feat == 0).sum() / feat.shape[0]
-    if zeros_pct > 0.8:
-        print(f"Feature {i}: {zeros_pct*100:.1f}% zeros, binarizing")
-        x_normalized[:, i] = (feat > 0).float()
-        continue
-    
-    # For positive features with large range, use log
-    if feat.min() >= 0 and feat.max() / (feat.std() + 1e-10) > 100:
-        print(f"Feature {i}: log-transforming")
-        feat_log = torch.log1p(feat)  # log(1 + x)
-        x_normalized[:, i] = (feat_log - feat_log.mean()) / (feat_log.std() + 1e-8)
-    else:
-        # Standard normalization with robust clipping
-        print(f"Feature {i}: standard scaling")
-        feat_norm = (feat - feat.mean()) / (feat.std() + 1e-8)
-        x_normalized[:, i] = torch.clamp(feat_norm, min=-5, max=5)
+    print(f"{i:<6} {feat.min():<10.2f} {feat.max():<10.2f} "
+          f"{feat.mean():<10.2f} {feat.std():<10.2f} {zeros_pct:<10.1f}")
 
-print("\nFinal normalized stats:")
-print(f"Min: {x_normalized.min():.2f}, Max: {x_normalized.max():.2f}")
-print(f"Mean: {x_normalized.mean():.2f}, Std: {x_normalized.std():.2f}")
+# Distribution analysis (sample-based for memory efficiency)
+print(f"\n{'='*60}")
+print("DISTRIBUTION ANALYSIS (sampled):")
+print(f"{'='*60}")
+
+# Sample 1M rows for percentile calculation (if >1M rows)
+if x.shape[0] > 1_000_000:
+    print("Note: Using 1M sample for percentiles (dataset too large)\n")
+    sample_idx = np.random.choice(x.shape[0], size=1_000_000, replace=False)
+    x_sample = x_np[sample_idx, :]
+else:
+    x_sample = x_np
+
+for i in range(x.shape[1]):
+    feat = x_sample[:, i]
+    
+    # Use numpy percentiles (more memory efficient)
+    q01 = np.percentile(feat, 1)
+    q25 = np.percentile(feat, 25)
+    q50 = np.percentile(feat, 50)
+    q75 = np.percentile(feat, 75)
+    q99 = np.percentile(feat, 99)
+    
+    # IQR outliers
+    iqr = q75 - q25
+    lower_fence = q25 - 1.5 * iqr
+    upper_fence = q75 + 1.5 * iqr
+    outliers = ((feat < lower_fence) | (feat > upper_fence)).sum()
+    outlier_pct = outliers / feat.shape[0] * 100
+    
+    print(f"Feature {i}:")
+    print(f"  Percentiles: 1%={q01:.2f}, 25%={q25:.2f}, 50%={q50:.2f}, 75%={q75:.2f}, 99%={q99:.2f}")
+    print(f"  Outliers: {outlier_pct:.2f}%")
+
+# Identify features needing attention
+print(f"\n{'='*60}")
+print("FEATURES NEEDING ATTENTION:")
+print(f"{'='*60}")
+
+for i in range(x.shape[1]):
+    feat = x_np[:, i]
+    
+    issues = []
+    
+    if feat.std() < 0.01:
+        issues.append("low variance")
+    if feat.max() > 10:
+        issues.append(f"large outlier (max={feat.max():.1f})")
+    if feat.min() < -10:
+        issues.append(f"large outlier (min={feat.min():.1f})")
+    if (feat == 0).sum() / feat.shape[0] > 0.5:
+        issues.append(f"{(feat == 0).sum() / feat.shape[0] * 100:.0f}% zeros")
+    
+    if issues:
+        print(f"Feature {i}: {', '.join(issues)}")
+
+print(f"\n{'='*60}")
+print("ANALYSIS COMPLETE")
+print(f"{'='*60}")
