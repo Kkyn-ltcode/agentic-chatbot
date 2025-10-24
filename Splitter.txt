@@ -1,37 +1,10 @@
-# Enhanced normalization
-x_normalized = torch.zeros_like(x)
-feature_types = []  # Track what you did to each feature
-
+# Check per-feature statistics
 for i in range(x.shape[1]):
-    feat = x[:, i]
-    
-    # Skip constant features
-    if feat.std() < 1e-10:
-        print(f"Feature {i}: constant → zero")
-        x_normalized[:, i] = 0
-        feature_types.append('constant')
-        continue
-    
-    zeros_pct = (feat == 0).sum() / feat.shape[0]
-    
-    # For very sparse features (>80% zeros)
-    if zeros_pct > 0.8:
-        print(f"Feature {i}: {zeros_pct*100:.1f}% zeros → binary")
-        x_normalized[:, i] = (feat > 0).float()
-        feature_types.append('binary')
-        continue
-    
-    # For positive features with large range
-    if feat.min() >= 0 and feat.max() / (feat.std() + 1e-10) > 100:
-        print(f"Feature {i}: heavy-tailed → log+scale")
-        feat_log = torch.log1p(feat)
-        feat_norm = (feat_log - feat_log.mean()) / (feat_log.std() + 1e-8)
-        # APPLY CLIPPING HERE TOO
-        x_normalized[:, i] = torch.clamp(feat_norm, min=-5, max=5)
-        feature_types.append('log')
-    else:
-        # Standard normalization
-        print(f"Feature {i}: standard scaling")
-        feat_norm = (feat - feat.mean()) / (feat.std() + 1e-8)
-        x_normalized[:, i] = torch.clamp(feat_norm, min=-5, max=5)
-        feature_types.append('standard')
+    feat = x_normalized[:, i]
+    print(f"Feature {i} ({feature_types[i]}): "
+          f"min={feat.min():.2f}, max={feat.max():.2f}, "
+          f"std={feat.std():.2f}, zeros={((feat==0).sum()/len(feat)*100):.1f}%")
+
+# Check for outliers
+print(f"\nValues > 5: {(x_normalized > 5).sum()}")
+print(f"Values < -5: {(x_normalized < -5).sum()}")
