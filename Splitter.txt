@@ -1,20 +1,123 @@
-import duckdb
+# save as build_edges_polars.py
+import os
+import polars as pl
+from pathlib import Path
 
-con = duckdb.connect()
+# ----------------------
+# Optional: set environment-level thread limits to avoid oversubscription
+# (helpful when running other software on the same machine)
+os.environ.setdefault("OMP_NUM_THREADS", "32")
+os.environ.setdefault("MKL_NUM_THREADS", "32")
+# Polars uses Arrow/Rust threads internally; setting OMP/MKL is useful too.
 
-query = """
-SELECT a.ID AS id1, b.ID AS id2
-FROM read_parquet('flows.parquet') a
-JOIN read_parquet('flows.parquet') b
-ON a.Src = b.Src
-WHERE a.ID <> b.ID
-UNION ALL
-SELECT a.ID, b.ID FROM read_parquet('flows.parquet') a JOIN read_parquet('flows.parquet') b ON a.Src = b.Dst WHERE a.ID <> b.ID
-UNION ALL
-SELECT a.ID, b.ID FROM read_parquet('flows.parquet') a JOIN read_parquet('flows.parquet') b ON a.Dst = b.Dst WHERE a.ID <> b.ID
-UNION ALL
-SELECT a.ID, b.ID FROM read_parquet('flows.parquet') a JOIN read_parquet('flows.parquet') b ON a.Dst = b.Src WHERE a.ID <> b.ID;
-"""
+# ----------------------
+# CONFIG
+INPUT_PARQUET = "flows.parquet"      # change to your file
+OUT_DIR = Path("edges_out")
+OUT_DIR.mkdir(exist_ok=True)
+TEMP_PREFIX = OUT_DIR / "tmp"
+FINAL_EDGES_PATH = OUT_DIR / "edges_final.parquet"
 
-edges = con.execute(query).pl()
-edges.write_parquet("edges.parquet")
+# tune chunk size for writing (rows per file when writing intermediate parquet)
+PARQUET_ROW_GROUP_SIZE = 200_000   # adjust if final edges extremely large
+
+# ----------------------
+# LOAD minimal columns
+# Important: read only columns required
+df = pl.read_parquet(INPUT_PARQUET, columns=["ID", "Src", "Dst"])
+
+# Ensure column dtypes are Utf8 for stable hashing
+df = df.with_columns([
+    pl.col("Src").cast(pl.Utf8),
+    pl.col("Dst").cast(pl.Utf8),
+])
+
+# ----------------------
+# Step 1: build key -> code mapping using unique values from Src and Dst
+# Combine unique keys (Src ∪ Dst)
+src_keys = df.select(pl.col("Src").alias("key")).unique()
+dst_keys = df.select(pl.col("Dst").alias("key")).unique()
+
+keys = pl.concat([src_keys, dst_keys], how="vertical").unique().with_row_count("key_code")
+# key_code: 0..N-1 (int64)
+# keys schema: [key_code:int64, key:str]
+
+# Optional: materialize to reduce memory spikes
+keys = keys.select(["key_code", "key"]).sort("key_code")
+
+# ----------------------
+# Step 2: map src/dst to integer codes by joining with 'keys'
+# Join to create src_code and dst_code (integer columns)
+df_codes = (
+    df.join(keys.rename({"key": "Src", "key_code": "src_code"}), on="Src", how="left")
+      .join(keys.rename({"key": "Dst", "key_code": "dst_code"}), on="Dst", how="left")
+      .select(["ID", "src_code", "dst_code"])
+)
+
+# Ensure codes are int64 and ID is same dtype as needed downstream
+df_codes = df_codes.with_columns([
+    pl.col("ID").cast(pl.Int64),
+    pl.col("src_code").cast(pl.Int64),
+    pl.col("dst_code").cast(pl.Int64),
+])
+
+# Free original df to release memory
+del df, src_keys, dst_keys
+
+# ----------------------
+# Step 3: Prepare left/right views to join on integer codes
+df_src = df_codes.select([pl.col("ID").alias("src_id"), pl.col("src_code").alias("key")])
+df_dst = df_codes.select([pl.col("ID").alias("dst_id"), pl.col("dst_code").alias("key")])
+
+# ----------------------
+# Helper to run a join, drop self-loops, and write out parquet
+def produce_and_write(join_left, join_right, left_alias, right_alias, out_name):
+    # join_left / join_right: DataFrames with columns [id_col, key]
+    # left_alias/right_alias used to rename Polars' join suffixes
+    joined = join_left.join(
+        join_right,
+        on="key",
+        how="inner",
+        suffix=f"_{left_alias},{right_alias}",
+        streaming=True
+    )
+    # Rename columns to standardized id1, id2
+    # Polars will produce columns: <idcol>_<left_alias> and <idcol>_<right_alias> if suffix used,
+    # but since we built the input with specific names, we can simply select columns directly:
+    if "src_id" in joined.columns and "dst_id" in joined.columns:
+        edges = joined.select([
+            pl.col("src_id").alias("id1"),
+            pl.col("dst_id").alias("id2")
+        ])
+    else:
+        # General case (if column names differ)
+        cols = joined.columns
+        # find first id-like column and second id-like column
+        id_cols = [c for c in cols if c.endswith("id") or c == "ID" or c.endswith("_id")]
+        edges = joined.select([pl.col(id_cols[0]).alias("id1"), pl.col(id_cols[1]).alias("id2")])
+
+    # Remove exact self-loops (id1 == id2)
+    edges = edges.filter(pl.col("id1") != pl.col("id2"))
+
+    # Write to parquet (partitioned or single file)
+    out_path = OUT_DIR / f"{out_name}.parquet"
+    edges.write_parquet(out_path, row_group_size=PARQUET_ROW_GROUP_SIZE)
+    # free memory
+    del joined, edges
+    return out_path
+
+# Produce the 4 cases (names matched to your original rules)
+p1 = produce_and_write(df_src, df_src, "left", "right", "src_src")   # Src - Src
+p2 = produce_and_write(df_src, df_dst, "left", "right", "src_dst")   # Src - Dst
+p3 = produce_and_write(df_dst, df_dst, "left", "right", "dst_dst")   # Dst - Dst
+p4 = produce_and_write(df_dst, df_src, "left", "right", "dst_src")   # Dst - Src
+
+# ----------------------
+# Step 4: Final concat + dedupe (in-memory ok for this size; if not, use DuckDB)
+edges_all = pl.concat([pl.read_parquet(p) for p in [p1, p2, p3, p4]], how="vertical")
+# Remove duplicates and keep unique directed edges
+edges_all = edges_all.unique()   # unique pair (id1,id2)
+
+# Final write
+edges_all.write_parquet(FINAL_EDGES_PATH, row_group_size=PARQUET_ROW_GROUP_SIZE)
+print("Final edges shape:", edges_all.shape)
