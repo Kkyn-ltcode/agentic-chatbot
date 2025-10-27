@@ -1,106 +1,37 @@
-import torch
-import numpy as np
+import polars as pl
 
-# Assume x is your (16M, 43) tensor on CPU
-# If on GPU, move to CPU first: x = x.cpu()
+# Assuming df has columns: ID, Src, Dst
+df_src = df.select(pl.col("ID").alias("id_src"), pl.col("Src").alias("key"))
+df_dst = df.select(pl.col("ID").alias("id_dst"), pl.col("Dst").alias("key"))
 
-print("="*60)
-print("MEMORY-EFFICIENT FEATURE ANALYSIS")
-print("="*60)
+# Helper function to run a streaming join safely
+def streaming_join(left, right, left_id, right_id):
+    return (
+        left.join(right, on="key", how="inner", streaming=True)
+            .select(
+                pl.col(f"{left_id}").alias("id1"),
+                pl.col(f"{right_id}").alias("id2")
+            )
+            .filter(pl.col("id1") != pl.col("id2"))
+    )
 
-print(f"\nShape: {x.shape}")
-print(f"Device: {x.device}")
+# 1. Src–Src
+src_src = streaming_join(df_src, df_src, "id_src_left", "id_src_right")
 
-# Overall stats (efficient)
-print(f"\nOverall Stats:")
-print(f"  Min: {x.min().item():.2f}")
-print(f"  Max: {x.max().item():.2f}")
-print(f"  Mean: {x.mean().item():.2f}")
-print(f"  Std: {x.std().item():.2f}")
+# 2. Src–Dst
+src_dst = streaming_join(df_src, df_dst, "id_src", "id_dst")
 
-# Use numpy for median (more memory efficient)
-x_np = x.numpy() if x.device.type == 'cpu' else x.cpu().numpy()
-print(f"  Median: {np.median(x_np):.2f}")
+# 3. Dst–Dst
+dst_dst = streaming_join(df_dst, df_dst, "id_dst_left", "id_dst_right")
 
-# Data quality
-print(f"\nData Quality:")
-print(f"  NaN count: {np.isnan(x_np).sum()}")
-print(f"  Inf count: {np.isinf(x_np).sum()}")
-print(f"  Zero count: {(x_np == 0).sum()} ({(x_np == 0).sum() / x_np.size * 100:.2f}%)")
-print(f"  Negative count: {(x_np < 0).sum()} ({(x_np < 0).sum() / x_np.size * 100:.2f}%)")
+# 4. Dst–Src
+dst_src = streaming_join(df_dst, df_src, "id_dst", "id_src")
 
-# Per-feature analysis (memory efficient)
-print(f"\n{'='*60}")
-print("PER-FEATURE ANALYSIS:")
-print(f"{'='*60}")
-print(f"{'Feat':<6} {'Min':<10} {'Max':<10} {'Mean':<10} {'Std':<10} {'Zeros%':<10}")
-print("-"*60)
+# Merge all edges and deduplicate
+edges = (
+    pl.concat([src_src, src_dst, dst_dst, dst_src], how="vertical")
+      .unique()
+)
 
-for i in range(x.shape[1]):
-    # Process one feature at a time
-    feat = x_np[:, i]
-    
-    zeros_pct = (feat == 0).sum() / feat.shape[0] * 100
-    
-    print(f"{i:<6} {feat.min():<10.2f} {feat.max():<10.2f} "
-          f"{feat.mean():<10.2f} {feat.std():<10.2f} {zeros_pct:<10.1f}")
-
-# Distribution analysis (sample-based for memory efficiency)
-print(f"\n{'='*60}")
-print("DISTRIBUTION ANALYSIS (sampled):")
-print(f"{'='*60}")
-
-# Sample 1M rows for percentile calculation (if >1M rows)
-if x.shape[0] > 1_000_000:
-    print("Note: Using 1M sample for percentiles (dataset too large)\n")
-    sample_idx = np.random.choice(x.shape[0], size=1_000_000, replace=False)
-    x_sample = x_np[sample_idx, :]
-else:
-    x_sample = x_np
-
-for i in range(x.shape[1]):
-    feat = x_sample[:, i]
-    
-    # Use numpy percentiles (more memory efficient)
-    q01 = np.percentile(feat, 1)
-    q25 = np.percentile(feat, 25)
-    q50 = np.percentile(feat, 50)
-    q75 = np.percentile(feat, 75)
-    q99 = np.percentile(feat, 99)
-    
-    # IQR outliers
-    iqr = q75 - q25
-    lower_fence = q25 - 1.5 * iqr
-    upper_fence = q75 + 1.5 * iqr
-    outliers = ((feat < lower_fence) | (feat > upper_fence)).sum()
-    outlier_pct = outliers / feat.shape[0] * 100
-    
-    print(f"Feature {i}:")
-    print(f"  Percentiles: 1%={q01:.2f}, 25%={q25:.2f}, 50%={q50:.2f}, 75%={q75:.2f}, 99%={q99:.2f}")
-    print(f"  Outliers: {outlier_pct:.2f}%")
-
-# Identify features needing attention
-print(f"\n{'='*60}")
-print("FEATURES NEEDING ATTENTION:")
-print(f"{'='*60}")
-
-for i in range(x.shape[1]):
-    feat = x_np[:, i]
-    
-    issues = []
-    
-    if feat.std() < 0.01:
-        issues.append("low variance")
-    if feat.max() > 10:
-        issues.append(f"large outlier (max={feat.max():.1f})")
-    if feat.min() < -10:
-        issues.append(f"large outlier (min={feat.min():.1f})")
-    if (feat == 0).sum() / feat.shape[0] > 0.5:
-        issues.append(f"{(feat == 0).sum() / feat.shape[0] * 100:.0f}% zeros")
-    
-    if issues:
-        print(f"Feature {i}: {', '.join(issues)}")
-
-print(f"\n{'='*60}")
-print("ANALYSIS COMPLETE")
-print(f"{'='*60}")
+# Optional: write to parquet
+edges.write_parquet("edges.parquet")
