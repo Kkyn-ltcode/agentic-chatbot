@@ -1,37 +1,20 @@
-import polars as pl
+import duckdb
 
-# Assuming df has columns: ID, Src, Dst
-df_src = df.select(pl.col("ID").alias("id_src"), pl.col("Src").alias("key"))
-df_dst = df.select(pl.col("ID").alias("id_dst"), pl.col("Dst").alias("key"))
+con = duckdb.connect()
 
-# Helper function to run a streaming join safely
-def streaming_join(left, right, left_id, right_id):
-    return (
-        left.join(right, on="key", how="inner", streaming=True)
-            .select(
-                pl.col(f"{left_id}").alias("id1"),
-                pl.col(f"{right_id}").alias("id2")
-            )
-            .filter(pl.col("id1") != pl.col("id2"))
-    )
+query = """
+SELECT a.ID AS id1, b.ID AS id2
+FROM read_parquet('flows.parquet') a
+JOIN read_parquet('flows.parquet') b
+ON a.Src = b.Src
+WHERE a.ID <> b.ID
+UNION ALL
+SELECT a.ID, b.ID FROM read_parquet('flows.parquet') a JOIN read_parquet('flows.parquet') b ON a.Src = b.Dst WHERE a.ID <> b.ID
+UNION ALL
+SELECT a.ID, b.ID FROM read_parquet('flows.parquet') a JOIN read_parquet('flows.parquet') b ON a.Dst = b.Dst WHERE a.ID <> b.ID
+UNION ALL
+SELECT a.ID, b.ID FROM read_parquet('flows.parquet') a JOIN read_parquet('flows.parquet') b ON a.Dst = b.Src WHERE a.ID <> b.ID;
+"""
 
-# 1. Src–Src
-src_src = streaming_join(df_src, df_src, "id_src_left", "id_src_right")
-
-# 2. Src–Dst
-src_dst = streaming_join(df_src, df_dst, "id_src", "id_dst")
-
-# 3. Dst–Dst
-dst_dst = streaming_join(df_dst, df_dst, "id_dst_left", "id_dst_right")
-
-# 4. Dst–Src
-dst_src = streaming_join(df_dst, df_src, "id_dst", "id_src")
-
-# Merge all edges and deduplicate
-edges = (
-    pl.concat([src_src, src_dst, dst_dst, dst_src], how="vertical")
-      .unique()
-)
-
-# Optional: write to parquet
+edges = con.execute(query).pl()
 edges.write_parquet("edges.parquet")
