@@ -1,123 +1,102 @@
-# save as build_edges_polars.py
-import os
 import polars as pl
+import multiprocessing as mp
 from pathlib import Path
+from itertools import product
 
-# ----------------------
-# Optional: set environment-level thread limits to avoid oversubscription
-# (helpful when running other software on the same machine)
-os.environ.setdefault("OMP_NUM_THREADS", "32")
-os.environ.setdefault("MKL_NUM_THREADS", "32")
-# Polars uses Arrow/Rust threads internally; setting OMP/MKL is useful too.
-
-# ----------------------
+# --------------------
 # CONFIG
-INPUT_PARQUET = "flows.parquet"      # change to your file
-OUT_DIR = Path("edges_out")
-OUT_DIR.mkdir(exist_ok=True)
-TEMP_PREFIX = OUT_DIR / "tmp"
-FINAL_EDGES_PATH = OUT_DIR / "edges_final.parquet"
+# --------------------
+INPUT_PATH = "flows.parquet"  # dataset (ID, Src, Dst)
+OUTPUT_PATH = "edges_global.parquet"
+TMP_DIR = Path("edges_tmp")
+TMP_DIR.mkdir(exist_ok=True)
 
-# tune chunk size for writing (rows per file when writing intermediate parquet)
-PARQUET_ROW_GROUP_SIZE = 200_000   # adjust if final edges extremely large
+# --------------------
+# STEP 1: Load and prepare
+# --------------------
+print("🔹 Loading dataset...")
+df = pl.read_parquet(INPUT_PATH).select(["ID", "Src", "Dst"])
 
-# ----------------------
-# LOAD minimal columns
-# Important: read only columns required
-df = pl.read_parquet(INPUT_PARQUET, columns=["ID", "Src", "Dst"])
-
-# Ensure column dtypes are Utf8 for stable hashing
+# Cast to categorical to optimize memory and hashing
 df = df.with_columns([
-    pl.col("Src").cast(pl.Utf8),
-    pl.col("Dst").cast(pl.Utf8),
+    pl.col("Src").cast(pl.Categorical),
+    pl.col("Dst").cast(pl.Categorical)
 ])
 
-# ----------------------
-# Step 1: build key -> code mapping using unique values from Src and Dst
-# Combine unique keys (Src ∪ Dst)
-src_keys = df.select(pl.col("Src").alias("key")).unique()
-dst_keys = df.select(pl.col("Dst").alias("key")).unique()
+# --------------------
+# STEP 2: Build global key → list[ID] mappings
+# --------------------
+print("🔹 Building global Src and Dst maps...")
 
-keys = pl.concat([src_keys, dst_keys], how="vertical").unique().with_row_count("key_code")
-# key_code: 0..N-1 (int64)
-# keys schema: [key_code:int64, key:str]
-
-# Optional: materialize to reduce memory spikes
-keys = keys.select(["key_code", "key"]).sort("key_code")
-
-# ----------------------
-# Step 2: map src/dst to integer codes by joining with 'keys'
-# Join to create src_code and dst_code (integer columns)
-df_codes = (
-    df.join(keys.rename({"key": "Src", "key_code": "src_code"}), on="Src", how="left")
-      .join(keys.rename({"key": "Dst", "key_code": "dst_code"}), on="Dst", how="left")
-      .select(["ID", "src_code", "dst_code"])
+src_map = (
+    df.select(["Src", "ID"])
+    .group_by("Src")
+    .agg(pl.col("ID").alias("ids"))
 )
 
-# Ensure codes are int64 and ID is same dtype as needed downstream
-df_codes = df_codes.with_columns([
-    pl.col("ID").cast(pl.Int64),
-    pl.col("src_code").cast(pl.Int64),
-    pl.col("dst_code").cast(pl.Int64),
-])
+dst_map = (
+    df.select(["Dst", "ID"])
+    .group_by("Dst")
+    .agg(pl.col("ID").alias("ids"))
+)
 
-# Free original df to release memory
-del df, src_keys, dst_keys
+# Optional: Convert to Python dicts (for parallel processing)
+src_dict = dict(zip(src_map["Src"], src_map["ids"]))
+dst_dict = dict(zip(dst_map["Dst"], dst_map["ids"]))
 
-# ----------------------
-# Step 3: Prepare left/right views to join on integer codes
-df_src = df_codes.select([pl.col("ID").alias("src_id"), pl.col("src_code").alias("key")])
-df_dst = df_codes.select([pl.col("ID").alias("dst_id"), pl.col("dst_code").alias("key")])
+print(f"✅ Built {len(src_dict):,} Src keys and {len(dst_dict):,} Dst keys.")
 
-# ----------------------
-# Helper to run a join, drop self-loops, and write out parquet
-def produce_and_write(join_left, join_right, left_alias, right_alias, out_name):
-    # join_left / join_right: DataFrames with columns [id_col, key]
-    # left_alias/right_alias used to rename Polars' join suffixes
-    joined = join_left.join(
-        join_right,
-        on="key",
-        how="inner",
-        suffix=f"_{left_alias},{right_alias}",
-        streaming=True
-    )
-    # Rename columns to standardized id1, id2
-    # Polars will produce columns: <idcol>_<left_alias> and <idcol>_<right_alias> if suffix used,
-    # but since we built the input with specific names, we can simply select columns directly:
-    if "src_id" in joined.columns and "dst_id" in joined.columns:
-        edges = joined.select([
-            pl.col("src_id").alias("id1"),
-            pl.col("dst_id").alias("id2")
-        ])
-    else:
-        # General case (if column names differ)
-        cols = joined.columns
-        # find first id-like column and second id-like column
-        id_cols = [c for c in cols if c.endswith("id") or c == "ID" or c.endswith("_id")]
-        edges = joined.select([pl.col(id_cols[0]).alias("id1"), pl.col(id_cols[1]).alias("id2")])
+# --------------------
+# STEP 3: Parallel edge generation helper
+# --------------------
+def gen_edges_for_key(args):
+    key, src_ids, dst_ids = args
+    pairs = []
 
-    # Remove exact self-loops (id1 == id2)
-    edges = edges.filter(pl.col("id1") != pl.col("id2"))
+    # Case 1: Src–Src
+    if src_ids and len(src_ids) > 1:
+        pairs.extend(product(src_ids, src_ids))
 
-    # Write to parquet (partitioned or single file)
-    out_path = OUT_DIR / f"{out_name}.parquet"
-    edges.write_parquet(out_path, row_group_size=PARQUET_ROW_GROUP_SIZE)
-    # free memory
-    del joined, edges
-    return out_path
+    # Case 2: Dst–Dst
+    if dst_ids and len(dst_ids) > 1:
+        pairs.extend(product(dst_ids, dst_ids))
 
-# Produce the 4 cases (names matched to your original rules)
-p1 = produce_and_write(df_src, df_src, "left", "right", "src_src")   # Src - Src
-p2 = produce_and_write(df_src, df_dst, "left", "right", "src_dst")   # Src - Dst
-p3 = produce_and_write(df_dst, df_dst, "left", "right", "dst_dst")   # Dst - Dst
-p4 = produce_and_write(df_dst, df_src, "left", "right", "dst_src")   # Dst - Src
+    # Case 3 + 4: Src–Dst and Dst–Src
+    if src_ids and dst_ids:
+        pairs.extend(product(src_ids, dst_ids))
+        pairs.extend(product(dst_ids, src_ids))
 
-# ----------------------
-# Step 4: Final concat + dedupe (in-memory ok for this size; if not, use DuckDB)
-edges_all = pl.concat([pl.read_parquet(p) for p in [p1, p2, p3, p4]], how="vertical")
-# Remove duplicates and keep unique directed edges
-edges_all = edges_all.unique()   # unique pair (id1,id2)
+    # Filter out self loops
+    pairs = [(a, b) for (a, b) in pairs if a != b]
+    return pairs
 
-# Final write
-edges_all.write_parquet(FINAL_EDGES_PATH, row_group_size=PARQUET_ROW_GROUP_SIZE)
-print("Final edges shape:", edges_all.shape)
+# --------------------
+# STEP 4: Merge Src and Dst keyspaces
+# --------------------
+print("🔹 Merging Src/Dst keys...")
+all_keys = set(src_dict.keys()) | set(dst_dict.keys())
+
+def key_args_generator():
+    for key in all_keys:
+        yield (
+            key,
+            src_dict.get(key, []),
+            dst_dict.get(key, [])
+        )
+
+# --------------------
+# STEP 5: Parallel generation across keys
+# --------------------
+print("🔹 Generating all edges in parallel...")
+with mp.Pool(processes=mp.cpu_count()) as pool:
+    all_edges = pool.map(gen_edges_for_key, key_args_generator(), chunksize=500)
+
+# Flatten and build Polars DataFrame
+edges = pl.DataFrame(
+    [pair for pairs in all_edges for pair in pairs],
+    schema=["id1", "id2"]
+).unique()
+
+edges.write_parquet(OUTPUT_PATH)
+print(f"✅ Done. Global edges written to {OUTPUT_PATH}")
+print(f"Total edges: {edges.shape[0]:,}")
