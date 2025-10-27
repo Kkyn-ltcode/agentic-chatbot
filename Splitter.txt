@@ -1,12 +1,12 @@
 import polars as pl
 import multiprocessing as mp
-from pathlib import Path
 from itertools import product
+from pathlib import Path
 
 # --------------------
 # CONFIG
 # --------------------
-INPUT_PATH = "flows.parquet"  # dataset (ID, Src, Dst)
+INPUT_PATH = "flows.parquet"  # dataset with columns: ID, Src, Dst
 OUTPUT_PATH = "edges_global.parquet"
 TMP_DIR = Path("edges_tmp")
 TMP_DIR.mkdir(exist_ok=True)
@@ -17,14 +17,14 @@ TMP_DIR.mkdir(exist_ok=True)
 print("🔹 Loading dataset...")
 df = pl.read_parquet(INPUT_PATH).select(["ID", "Src", "Dst"])
 
-# Cast to categorical to optimize memory and hashing
+# Optional: speed up joins and hashing
 df = df.with_columns([
     pl.col("Src").cast(pl.Categorical),
     pl.col("Dst").cast(pl.Categorical)
 ])
 
 # --------------------
-# STEP 2: Build global key → list[ID] mappings
+# STEP 2: Build global maps (convert to pure Python)
 # --------------------
 print("🔹 Building global Src and Dst maps...")
 
@@ -40,58 +40,54 @@ dst_map = (
     .agg(pl.col("ID").alias("ids"))
 )
 
-# Optional: Convert to Python dicts (for parallel processing)
-src_dict = dict(zip(src_map["Src"], src_map["ids"]))
-dst_dict = dict(zip(dst_map["Dst"], dst_map["ids"]))
+# Convert Polars Series -> native Python objects
+src_dict = {
+    k: v.to_list() for k, v in zip(src_map["Src"].to_list(), src_map["ids"])
+}
+dst_dict = {
+    k: v.to_list() for k, v in zip(dst_map["Dst"].to_list(), dst_map["ids"])
+}
 
 print(f"✅ Built {len(src_dict):,} Src keys and {len(dst_dict):,} Dst keys.")
 
 # --------------------
-# STEP 3: Parallel edge generation helper
+# STEP 3: Edge generation per key
 # --------------------
 def gen_edges_for_key(args):
     key, src_ids, dst_ids = args
     pairs = []
 
-    # Case 1: Src–Src
     if src_ids and len(src_ids) > 1:
-        pairs.extend(product(src_ids, src_ids))
+        pairs.extend(product(src_ids, src_ids))  # Src–Src
 
-    # Case 2: Dst–Dst
     if dst_ids and len(dst_ids) > 1:
-        pairs.extend(product(dst_ids, dst_ids))
+        pairs.extend(product(dst_ids, dst_ids))  # Dst–Dst
 
-    # Case 3 + 4: Src–Dst and Dst–Src
     if src_ids and dst_ids:
-        pairs.extend(product(src_ids, dst_ids))
-        pairs.extend(product(dst_ids, src_ids))
+        pairs.extend(product(src_ids, dst_ids))  # Src–Dst
+        pairs.extend(product(dst_ids, src_ids))  # Dst–Src
 
-    # Filter out self loops
-    pairs = [(a, b) for (a, b) in pairs if a != b]
-    return pairs
+    # remove self-loops
+    return [(a, b) for (a, b) in pairs if a != b]
 
 # --------------------
-# STEP 4: Merge Src and Dst keyspaces
+# STEP 4: Merge keyspaces
 # --------------------
-print("🔹 Merging Src/Dst keys...")
+print("🔹 Preparing parallel workload...")
 all_keys = set(src_dict.keys()) | set(dst_dict.keys())
 
-def key_args_generator():
+def key_arg_generator():
     for key in all_keys:
-        yield (
-            key,
-            src_dict.get(key, []),
-            dst_dict.get(key, [])
-        )
+        yield (key, src_dict.get(key, []), dst_dict.get(key, []))
 
 # --------------------
-# STEP 5: Parallel generation across keys
+# STEP 5: Parallel edge generation
 # --------------------
-print("🔹 Generating all edges in parallel...")
+print("🔹 Generating edges in parallel...")
 with mp.Pool(processes=mp.cpu_count()) as pool:
-    all_edges = pool.map(gen_edges_for_key, key_args_generator(), chunksize=500)
+    all_edges = pool.map(gen_edges_for_key, key_arg_generator(), chunksize=500)
 
-# Flatten and build Polars DataFrame
+# Flatten and build DataFrame
 edges = pl.DataFrame(
     [pair for pairs in all_edges for pair in pairs],
     schema=["id1", "id2"]
