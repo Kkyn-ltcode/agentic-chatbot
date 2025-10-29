@@ -4,22 +4,31 @@ import plotly.express as px
 # --- Load Excel file ---
 df = pd.read_excel("your_file.xlsx")
 
-# Clean column names (optional)
+# Clean column names
 df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-# --- Create a grouped bar chart with one facet per 'tc' ---
+# --- Melt the accuracy columns ---
+df_long = df.melt(
+    id_vars=["tc", "subtc", "utt"],  # columns to keep
+    value_vars=["word_acc", "phrase_acc", "character_acc"],  # columns to melt
+    var_name="accuracy_type",
+    value_name="accuracy_value"
+)
+
+# --- Create grouped bar chart with one facet per 'tc' ---
 fig = px.bar(
-    df,
+    df_long,
     x="subtc",
-    y=["word_acc", "phrase_acc", "character_acc"],  # 3 accuracy metrics
-    facet_col="tc",  # each 'tc' gets its own subplot
+    y="accuracy_value",
+    color="accuracy_type",
+    facet_col="tc",
     barmode="group",
-    color_discrete_sequence=px.colors.qualitative.Set2,
     text_auto=True,
+    color_discrete_sequence=px.colors.qualitative.Set2,
     title="Accuracy Comparison by Task (tc) and Subtask (subtc)",
 )
 
-# --- Aesthetic improvements ---
+# --- Beautify ---
 fig.update_layout(
     font=dict(family="Arial", size=14),
     title_x=0.5,
@@ -32,12 +41,11 @@ fig.update_layout(
     bargroupgap=0.05,
 )
 
-# Make subplots neat
-fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))  # Clean facet labels
+# Clean facet titles
+fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
 
-# Add gridlines & format y-axis
+# Format axes
 fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor="lightgray", title="Accuracy (%)")
 fig.update_xaxes(title="Subtask (subtc)")
 
-# --- Show chart ---
 fig.show()
