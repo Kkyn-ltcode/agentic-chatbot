@@ -1,51 +1,86 @@
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 
-# --- Load Excel file ---
+# Example data (replace with your own Excel load)
 df = pd.read_excel("your_file.xlsx")
-
-# Clean column names
 df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-# --- Melt the accuracy columns ---
+# Melt for long format
 df_long = df.melt(
-    id_vars=["tc", "subtc", "utt"],  # columns to keep
-    value_vars=["word_acc", "phrase_acc", "character_acc"],  # columns to melt
+    id_vars=["tc", "subtc"],
+    value_vars=["word_acc", "phrase_acc", "character_acc"],
     var_name="accuracy_type",
     value_name="accuracy_value"
 )
 
-# --- Create grouped bar chart with one facet per 'tc' ---
-fig = px.bar(
-    df_long,
-    x="subtc",
-    y="accuracy_value",
-    color="accuracy_type",
-    facet_col="tc",
-    barmode="group",
-    text_auto=True,
-    color_discrete_sequence=px.colors.qualitative.Set2,
-    title="Accuracy Comparison by Task (tc) and Subtask (subtc)",
-)
+# Choose one TC for a single-panel demo
+tc_name = df_long["tc"].unique()[0]
+df_tc = df_long[df_long["tc"] == tc_name]
 
-# --- Beautify ---
+# --- Color palette (soft pastel gradient) ---
+colors = {
+    "word_acc": "rgba(132, 84, 245, 0.85)",     # violet
+    "phrase_acc": "rgba(168, 132, 255, 0.85)",  # soft purple
+    "character_acc": "rgba(210, 188, 255, 0.85)" # lavender
+}
+
+# --- Create figure ---
+fig = go.Figure()
+
+for acc_type in df_tc["accuracy_type"].unique():
+    d = df_tc[df_tc["accuracy_type"] == acc_type]
+    fig.add_trace(go.Bar(
+        x=d["subtc"],
+        y=d["accuracy_value"],
+        name=acc_type.replace("_", " ").title(),
+        marker=dict(
+            color=colors[acc_type],
+            line=dict(color="rgba(255,255,255,0.9)", width=1.5),
+        ),
+        text=[f"{v:.1f}%" for v in d["accuracy_value"]],
+        textposition="outside",
+        width=0.6,
+    ))
+
+# --- Layout styling ---
 fig.update_layout(
-    font=dict(family="Arial", size=14),
+    title=f"<b>Accuracy by Subtask ({tc_name})</b>",
     title_x=0.5,
-    title_font=dict(size=20, family="Arial Black"),
-    legend_title_text="Accuracy Type",
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    hovermode="x unified",
-    bargap=0.15,
+    title_font=dict(size=24, color="#1a1a1a"),
+    font=dict(size=16, family="Inter, Arial"),
+    barmode="group",
+    bargap=0.25,
     bargroupgap=0.05,
+    paper_bgcolor="rgba(245,245,250,1)",
+    plot_bgcolor="rgba(245,245,250,1)",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.05,
+        xanchor="center",
+        x=0.5,
+        bgcolor="rgba(255,255,255,0)",
+    ),
+    margin=dict(l=40, r=40, t=80, b=40),
 )
 
-# Clean facet titles
-fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+# --- Axis aesthetics ---
+fig.update_yaxes(
+    showgrid=False,
+    visible=False
+)
+fig.update_xaxes(
+    tickfont=dict(size=14, color="#444"),
+    showline=False,
+    showgrid=False
+)
 
-# Format axes
-fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor="lightgray", title="Accuracy (%)")
-fig.update_xaxes(title="Subtask (subtc)")
+# --- Add subtle rounded effect by overlay ---
+for trace in fig.data:
+    trace.marker.line.width = 0
+    trace.marker.opacity = 0.9
 
 fig.show()
+
+fig.update_traces(marker_line_width=0, selector=dict(type='bar'))
+fig.update_layout(transition_duration=800)
