@@ -1,40 +1,164 @@
-if __name__ == '__main__':
-    # Load data and generate HTML report on startup
-    print("\n" + "="*60)
-    print("🚀 Loading data and generating HTML report...")
-    print("="*60 + "\n")
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+
+# --- Configuration ---
+ACCURACY_FILE = 'th_1_cer_acc.xlsx'
+DETAIL_FILE = 'th_1.xlsx'
+
+# --- 1. Data Loading and Initial Processing ---
+def load_and_process_data():
+    """Loads and processes the data from both Excel files."""
+    print(f"Loading data from {ACCURACY_FILE}...")
+    try:
+        # Load the main accuracy file
+        df_acc = pd.read_excel(ACCURACY_FILE)
+    except FileNotFoundError:
+        print(f"Error: Accuracy file '{ACCURACY_FILE}' not found. Please ensure it is in the same directory.")
+        return None, None
     
-    data = loader.load_all_data()
+    # Clean up column names by stripping whitespace (a common Excel issue)
+    df_acc.columns = df_acc.columns.str.strip()
+
+    # Convert columns to appropriate numeric types, coercing errors
+    for col in ['word acc', 'phrase acc', 'character acc']:
+        # Note: Your example shows '09' which might be read as a string. 
+        # Using pd.to_numeric with 'coerce' is robust here.
+        df_acc[col] = pd.to_numeric(df_acc[col], errors='coerce')
+
+    # Calculate an 'Overall Accuracy' metric for the line chart
+    # This is a simple average for visualization, adjust the calculation 
+    # if you have a specific weighted metric.
+    df_acc['Overall Accuracy'] = df_acc[['word acc', 'phrase acc', 'character acc']].mean(axis=1)
+
+    print(f"Loading data from {DETAIL_FILE} and calculating aggregated stats...")
+    try:
+        # Load the second file, reading all sheets to get the counts
+        # We use a dictionary comprehension to read all sheets
+        all_sheets = pd.read_excel(DETAIL_FILE, sheet_name=None)
+    except FileNotFoundError:
+        print(f"Error: Detail file '{DETAIL_FILE}' not found. Please ensure it is in the same directory.")
+        return None, None
+
+    subtc_counts = []
+    for subtc_name, df_sheet in all_sheets.items():
+        # Clean column names in detail sheets
+        df_sheet.columns = df_sheet.columns.str.strip()
+        
+        # Calculate PASS/FAIL counts
+        total_count = len(df_sheet)
+        pass_count = (df_sheet['result'].str.upper().str.strip() == 'PASS').sum()
+        fail_count = total_count - pass_count
+        
+        # Aggregate the stats per subtc
+        subtc_counts.append({
+            'subtc': subtc_name,
+            'Total Utterances': total_count,
+            'Pass Count': pass_count,
+            'Fail Count': fail_count,
+            'Pass Rate (%)': (pass_count / total_count) * 100 if total_count > 0 else 0
+        })
+
+    df_counts = pd.DataFrame(subtc_counts)
     
-    if data and not data['summary'].empty:
-        html_content = generate_html_report(data)
-        
-        # Create reports directory if it doesn't exist
-        reports_dir = Path("./reports")
-        reports_dir.mkdir(exist_ok=True)
-        
-        # Save HTML report
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        report_filename = reports_dir / f"ASR_Report_{timestamp}.html"
-        
-        with open(report_filename, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        
-        # Get absolute path
-        abs_path = report_filename.resolve()
-        
-        print("✅ Report generated successfully!")
-        print(f"📄 Report saved to: {abs_path}")
-        print(f"\n🔗 Open in browser:")
-        print(f"   file://{abs_path}")
-        print("\n" + "="*60)
-    else:
-        print("⚠️  No data found. Please check your data folder.")
-        print("="*60 + "\n")
+    # --- 2. Data Merging and Final Preparation ---
+    # Merge the accuracy data with the counts data on 'subtc'
+    df_final = pd.merge(df_acc, df_counts, on='subtc', how='left')
     
-    # Start the dashboard server
-    print("\n🌐 Starting dashboard server...")
-    print(f"🔗 Dashboard URL: http://localhost:8050")
-    print("   Press CTRL+C to stop\n")
+    # Sort by 'Tc' and 'subtc' to give a natural order for the chart (like time)
+    # If your 'subtc' represents months/time, you might need a custom sort key
+    df_final = df_final.sort_values(by=['Tc', 'subtc']).reset_index(drop=True)
     
-    app.run_server(debug=True, host='0.0.0.0', port=8050)
+    print("Data processing complete.")
+    return df_final
+
+# --- 3. Plotly Visualization ---
+def create_plotly_chart(df: pd.DataFrame):
+    """Generates the interactive Plotly line chart."""
+    if df is None:
+        return
+        
+    print("Generating Plotly chart...")
+    
+    # Create the figure object
+    fig = go.Figure()
+
+    # --- Line Chart for Overall Accuracy (Primary Trace) ---
+    # We use 'Tc' and 'subtc' to create the sequence on the X-axis
+    fig.add_trace(go.Scatter(
+        x=df['subtc'], 
+        y=df['Overall Accuracy'],
+        mode='lines+markers',
+        name='Overall Accuracy (%)',
+        line=dict(color='mediumpurple', width=3), # Use a color similar to your example image
+        marker=dict(size=8, color='mediumpurple', line=dict(width=1, color='DarkSlateGrey')),
+        hovertemplate=(
+            "<b>%{x}</b><br>" +
+            "Accuracy: %{y:.2f}%<br>" +
+            f"Total Utterances: {df['Total Utterances'].iloc[0]}<br>" +
+            f"Pass Rate: {df['Pass Rate (%)'].iloc[0]:.2f}%<extra></extra>"
+        )
+    ))
+
+    # --- Secondary Scatter Traces (Markers for Detailed Accuracies) ---
+    # Adding markers for the individual accuracy metrics
+    fig.add_trace(go.Scatter(
+        x=df['subtc'], y=df['word acc'], mode='markers', name='Word Accuracy',
+        marker=dict(size=6, symbol='circle', color='orange')
+    ))
+    fig.add_trace(go.Scatter(
+        x=df['subtc'], y=df['phrase acc'], mode='markers', name='Phrase Accuracy',
+        marker=dict(size=6, symbol='square', color='lightgreen')
+    ))
+    fig.add_trace(go.Scatter(
+        x=df['subtc'], y=df['character acc'], mode='markers', name='Character Accuracy',
+        marker=dict(size=6, symbol='diamond', color='lightblue')
+    ))
+
+    # --- Layout Styling (Mimicking the 'Beautiful' Style) ---
+    fig.update_layout(
+        # Title and Axes
+        title_text='<b>ASR Accuracy Trends by Sub-Category (subtc)</b>',
+        xaxis_title='Test Sub-Category (subtc)',
+        yaxis_title='Accuracy Percentage (%)',
+        
+        # General Appearance
+        plot_bgcolor='white',  # White background for the plotting area
+        paper_bgcolor='white', # White background for the whole figure
+        
+        # Gridlines and Ticks
+        xaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False, range=[0, 100]),
+        
+        # Legend (position it at the top right)
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        
+        # Font Style
+        font=dict(family="Arial, sans-serif", size=12, color="black"),
+        
+        # Margin for a cleaner look
+        margin=dict(l=40, r=40, t=80, b=40)
+    )
+
+    # --- Display the Chart ---
+    # This will open the interactive chart in your default web browser
+    output_html_file = 'accuracy_line_chart.html'
+    fig.write_html(output_html_file)
+    print(f"Chart successfully saved as '{output_html_file}'. Opening the chart...")
+    fig.show()
+
+# --- Main Execution Block ---
+if __name__ == "__main__":
+    # 1. Load, Merge, and Process Data
+    final_data = load_and_process_data()
+    
+    # 2. Visualize
+    if final_data is not None:
+        create_plotly_chart(final_data)
