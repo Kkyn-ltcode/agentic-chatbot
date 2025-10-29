@@ -2,70 +2,70 @@ import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 
-# --- 1. CONFIGURATION ---
-# Set a visually appealing template (e.g., 'ggplot2', 'plotly_white', 'plotly_dark')
-pio.templates.default = "ggplot2"
+# Set a visually appealing template
+pio.templates.default = "plotly_white"
 
-# --- 2. DATA LOADING & CLEANING (Customize this section for your file) ---
-
-# IMPORTANT: REPLACE THIS SAMPLE DATA WITH YOUR FILE LOADING LOGIC
-# Example for an Excel file named 'your_file.xlsx':
-# try:
-#     df = pd.read_excel('your_file.xlsx')
-# except FileNotFoundError:
-#     print("Error: 'your_file.xlsx' not found. Using sample data instead.")
-
-# Sample Data based on your description for demonstration:
+# 1. --- Data Preparation (Using Sample Data Structure) ---
+# IMPORTANT: Use pd.read_excel('your_file_name.xlsx') for your actual file
 data = {
     'Tc': ['A', 'A', 'B', 'B', 'A', 'B', 'A', 'B'],
     'subtc': ['X', 'Y', 'Z', 'y', 'X', 'Z', 'Y', 'y'],
     'utt': [1066, 1066, 108, 108, 500, 200, 400, 300],
-    'word_acc': ['12', '43', '85', '74', '15', '90', '40', '70'],
-    'phrase_acc': ['12', '21', '09', '92', '10', '11', '25', '95'],
-    'character_acc': ['12', '54', '12', '12', '10', '15', '50', '15']
+    'word acc': ['12', '43', '85', '74', '15', '90', '40', '70'],
+    'phrase acc': ['12', '21', '09', '92', '10', '11', '25', '95'],
+    'character acc': ['12', '54', '12', '12', '10', '15', '50', '15']
 }
 df = pd.DataFrame(data)
 
-# Rename columns for easier use (assuming the order in your file)
+# Clean up column names
 df.columns = ['Tc', 'subtc', 'utt', 'word_acc', 'phrase_acc', 'character_acc']
 
-# Convert the accuracy columns to numeric (handling potential string/object types)
+# Convert the accuracy columns to numeric
 acc_cols = ['word_acc', 'phrase_acc', 'character_acc']
 for col in acc_cols:
-    # Coerce errors to NaN and fill NaN with 0, then convert to integer
     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-# --- 3. AGGREGATION ---
+# 2. --- MELT the DataFrame (Reshaping) ---
 
-# Calculate the average 'word_acc' for each combination of 'Tc' and 'subtc'
-avg_acc_by_subtc = df.groupby(['Tc', 'subtc'])['word_acc'].mean().reset_index()
-avg_acc_by_subtc.rename(columns={'word_acc': 'Avg_Word_Accuracy'}, inplace=True)
-
-
-# --- 4. PLOTLY CHART CREATION ---
-
-fig_grouped = px.bar(
-    avg_acc_by_subtc,
-    x='subtc', # The subcategory on the x-axis
-    y='Avg_Word_Accuracy',
-    color='Tc', # Use 'Tc' to color and group the bars
-    barmode='group', # Set the bar mode to 'group' for side-by-side bars
-    title='Average Word Accuracy by Sub Test Case (subtc), Grouped by Tc',
-    labels={
-        'subtc': 'Sub Test Case',
-        'Avg_Word_Accuracy': 'Average Word Accuracy'
-    },
+df_long = pd.melt(
+    df,
+    # Columns to keep as identifiers (will be the axes and groups)
+    id_vars=['Tc', 'subtc', 'utt'],
+    # Columns containing the values to stack
+    value_vars=acc_cols,
+    var_name='Metric', # Name for the new column holding the old column names
+    value_name='Accuracy' # Name for the new column holding the values
 )
 
-# --- 5. CUSTOMIZATION & OUTPUT ---
+# Clean up Metric names for display
+df_long['Metric'] = df_long['Metric'].str.replace('_acc', '').str.replace('_', ' ').str.title()
 
-# Customize chart appearance
-fig_grouped.update_layout(
-    xaxis_tickangle=-45, # Angle the x-axis labels to prevent overlap
-    legend_title_text='Test Case (Tc)',
-    uniformtext_minsize=10,
-    hovermode="x unified", # Clean up the hover behavior
-    # Add a percentage sign to the y-axis ticks
+# 3. --- PLOTLY CHART CREATION ---
+fig = px.bar(
+    df_long,
+    x='subtc', # The subcategory on the x-axis
+    y='Accuracy',
+    color='Metric', # Use the Metric (Word, Phrase, Character) for bar colors
+    facet_col='Tc', # Use Tc to create separate columns/groups of charts (faceting)
+    barmode='group', # Puts the metric bars side-by-side
+    title='Accuracy Measurements by Sub Test Case, Grouped by Tc and Metric',
+    labels={
+        'subtc': 'Sub Test Case (subtc)',
+        'Accuracy': 'Accuracy (%)'
+    },
+    height=500,
+    template='ggplot2'
+)
+
+# 4. --- CUSTOMIZATION ---
+
+# Clean up the facet titles (e.g., "Tc=A" becomes "Test Case: A")
+fig.for_each_annotation(lambda a: a.update(text=f"Test Case: {a.text.split('=')[-1]}"))
+
+fig.update_layout(
+    xaxis_tickangle=-45,
+    legend_title_text='Accuracy Metric',
+    hovermode="closest",
     yaxis=dict(
         tickformat=".1f", # Display one decimal place
         ticksuffix="%"
@@ -73,11 +73,6 @@ fig_grouped.update_layout(
 )
 
 # Add text labels on top of the bars
-fig_grouped.update_traces(texttemplate='%{y:.1f}%', textposition='outside')
+fig.update_traces(texttemplate='%{y:.0f}%', textposition='outside')
 
-# Output the chart:
-# 1. To display the interactive chart in a Jupyter/Colab notebook:
-fig_grouped.show()
-
-# 2. To save the chart as an interactive HTML file:
-# fig_grouped.write_html("grouped_word_accuracy_chart.html")
+fig.show()
