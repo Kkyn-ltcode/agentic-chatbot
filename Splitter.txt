@@ -1,19 +1,36 @@
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
+import plotly.express as px # Using px for melting, go for plotting
 import plotly.io as pio
 
-# Set a visually appealing template
+# --- 1. CONFIGURATION & TEMPLATE ---
+# Set a clean, light template as a base for overall aesthetics
 pio.templates.default = "plotly_white"
 
-# 1. --- Data Preparation (Using Sample Data Structure) ---
-# IMPORTANT: Use pd.read_excel('your_file_name.xlsx') for your actual file
+# Define a custom color palette that has some depth and gradient feel
+# These are shades of purple/blue, similar to the image's aesthetic
+COLOR_PALETTE = {
+    'Word': 'rgba(100, 100, 250, 0.9)',     # Lighter blue-purple
+    'Phrase': 'rgba(130, 70, 230, 0.9)',    # Medium purple
+    'Character': 'rgba(70, 50, 200, 0.9)'   # Darker blue-purple
+}
+
+# --- 2. DATA LOADING & CLEANING (Your Data) ---
+# IMPORTANT: REPLACE THIS SAMPLE DATA WITH YOUR FILE LOADING LOGIC
+# Example for an Excel file named 'your_file.xlsx':
+# try:
+#     df = pd.read_excel('your_file.xlsx')
+# except FileNotFoundError:
+#     print("Error: 'your_file.xlsx' not found. Using sample data instead.")
+
+# Sample Data based on your description for demonstration:
 data = {
-    'Tc': ['A', 'A', 'B', 'B', 'A', 'B', 'A', 'B'],
-    'subtc': ['X', 'Y', 'Z', 'y', 'X', 'Z', 'Y', 'y'],
-    'utt': [1066, 1066, 108, 108, 500, 200, 400, 300],
-    'word acc': ['12', '43', '85', '74', '15', '90', '40', '70'],
-    'phrase acc': ['12', '21', '09', '92', '10', '11', '25', '95'],
-    'character acc': ['12', '54', '12', '12', '10', '15', '50', '15']
+    'Tc': ['A', 'A', 'B', 'B', 'A', 'B', 'A', 'B', 'C', 'C'],
+    'subtc': ['X', 'Y', 'Z', 'y', 'X', 'Z', 'Y', 'y', 'P', 'Q'],
+    'utt': [1066, 1066, 108, 108, 500, 200, 400, 300, 150, 250],
+    'word acc': ['12', '43', '85', '74', '15', '90', '40', '70', '60', '55'],
+    'phrase acc': ['12', '21', '09', '92', '10', '11', '25', '95', '70', '65'],
+    'character acc': ['12', '54', '12', '12', '10', '15', '50', '15', '80', '75']
 }
 df = pd.DataFrame(data)
 
@@ -25,54 +42,114 @@ acc_cols = ['word_acc', 'phrase_acc', 'character_acc']
 for col in acc_cols:
     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-# 2. --- MELT the DataFrame (Reshaping) ---
+# --- 3. MELT the DataFrame (Reshaping) ---
 
 df_long = pd.melt(
     df,
-    # Columns to keep as identifiers (will be the axes and groups)
     id_vars=['Tc', 'subtc', 'utt'],
-    # Columns containing the values to stack
     value_vars=acc_cols,
-    var_name='Metric', # Name for the new column holding the old column names
-    value_name='Accuracy' # Name for the new column holding the values
+    var_name='Metric',
+    value_name='Accuracy'
 )
 
-# Clean up Metric names for display
+# Clean up Metric names for display and ensure consistent order
+metric_order = ['Word Accuracy', 'Phrase Accuracy', 'Character Accuracy']
 df_long['Metric'] = df_long['Metric'].str.replace('_acc', '').str.replace('_', ' ').str.title()
+df_long['Metric'] = pd.Categorical(df_long['Metric'], categories=metric_order, ordered=True)
 
-# 3. --- PLOTLY CHART CREATION ---
+# Sort the data for consistent plotting order
+df_long = df_long.sort_values(by=['Tc', 'subtc', 'Metric'])
+
+
+# --- 4. PLOTLY CHART CREATION (using go.Figure with Faceting) ---
+
 fig = px.bar(
     df_long,
-    x='subtc', # The subcategory on the x-axis
+    x='subtc',
     y='Accuracy',
-    color='Metric', # Use the Metric (Word, Phrase, Character) for bar colors
-    facet_col='Tc', # Use Tc to create separate columns/groups of charts (faceting)
-    barmode='group', # Puts the metric bars side-by-side
-    title='Accuracy Measurements by Sub Test Case, Grouped by Tc and Metric',
+    color='Metric',
+    facet_col='Tc',
+    barmode='group',
+    title='Accuracy Measurements by Sub Test Case and Metric, Grouped by Tc',
     labels={
-        'subtc': 'Sub Test Case (subtc)',
+        'subtc': 'Sub Test Case',
         'Accuracy': 'Accuracy (%)'
     },
+    color_discrete_map=COLOR_PALETTE, # Use our custom color palette
     height=500,
-    template='ggplot2'
+    template='ggplot2' # Start with a clean template, then customize
 )
 
-# 4. --- CUSTOMIZATION ---
+# --- 5. CUSTOMIZATION ---
 
-# Clean up the facet titles (e.g., "Tc=A" becomes "Test Case: A")
-fig.for_each_annotation(lambda a: a.update(text=f"Test Case: {a.text.split('=')[-1]}"))
+# Remove "Test Case: " from facet titles, keep only the category (e.g., "A", "B")
+fig.for_each_annotation(lambda a: a.update(text=a.text.split('=')[-1]))
 
 fig.update_layout(
-    xaxis_tickangle=-45,
-    legend_title_text='Accuracy Metric',
-    hovermode="closest",
+    title_x=0.5, # Center the main title
+    title_font_size=20,
+    
+    # Background colors for the paper and plot area
+    paper_bgcolor='white', # White background for the whole figure
+    plot_bgcolor='rgba(255,255,255,0)', # Transparent plot area background
+    
+    # Y-axis styling
     yaxis=dict(
-        tickformat=".1f", # Display one decimal place
-        ticksuffix="%"
-    )
+        showgrid=False,       # No y-grid lines
+        showline=False,       # No y-axis line
+        showticklabels=False, # No y-axis tick labels
+        zeroline=False,       # No zero line
+        range=[0, df_long['Accuracy'].max() * 1.2] # Extend y-axis for labels
+    ),
+    
+    # X-axis styling (for each facet)
+    xaxis=dict(
+        showgrid=False,       # No x-grid lines
+        showline=False,       # No x-axis line
+        tickfont=dict(size=12, color='black'),
+        title_text='',        # Remove x-axis title
+        fixedrange=True       # Prevent zooming on x-axis
+    ),
+    
+    # Facet layout styling (for each individual subgraph)
+    # This affects the x-axis and y-axis of each subplot, as well as the margins
+    # The image has very minimal spacing and lines
+    font=dict(family="Arial, sans-serif", size=12, color="#333"),
+    
+    # Margin adjustments (can play with these for tighter/looser look)
+    margin=dict(l=50, r=50, t=80, b=50),
+    
+    # Legend styling
+    legend=dict(
+        orientation="h",       # Horizontal legend
+        yanchor="bottom",      # Anchor to bottom
+        y=1.02,                # Position above the plot
+        xanchor="right",       # Anchor to right
+        x=1,                   # Position at far right
+        bgcolor='rgba(255,255,255,0.8)', # Slight background for readability
+        bordercolor='rgba(0,0,0,0)',
+        borderwidth=0
+    ),
+    
+    # Adjust bar gaps for a visually pleasing look
+    bargap=0.3,      # Gap between groups of bars (subtc categories)
+    bargroupgap=0.1, # Gap between bars within a group (Metrics)
 )
 
-# Add text labels on top of the bars
-fig.update_traces(texttemplate='%{y:.0f}%', textposition='outside')
+# Customize the individual traces (bars) for border and text
+fig.update_traces(
+    marker_line_width=0.5,
+    marker_line_color='rgba(0,0,0,0.1)', # Subtle border for depth
+    texttemplate='%{y:.0f}%',
+    textposition='outside', # Labels outside the bars
+    textfont=dict(color='black', size=11),
+    # For rounded corners, we would need to manually create shapes or use CSS if possible
+    # We are simulating a clean look without direct rounded corners for go.Bar
+)
+
+# Set the style for each individual subplot (facet)
+fig.for_each_xaxis(lambda xaxis: xaxis.update(showline=True, linecolor='lightgrey', linewidth=0.5))
+fig.for_each_yaxis(lambda yaxis: yaxis.update(showline=False, showgrid=False)) # Already done above, reinforcing
+
 
 fig.show()
