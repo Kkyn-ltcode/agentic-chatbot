@@ -1,159 +1,23 @@
-import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import plotly.io as pio
 
-# --- 0. CONFIGURATION AND SAMPLE DATA ---
+tcs = df["Tc"].unique()
+fig = make_subplots(rows=1, cols=len(tcs), subplot_titles=[f"Tc = {t}" for t in tcs])
 
-# Set a clean base template
-pio.templates.default = "plotly_white"
-
-# Define a custom color palette for the three metrics
-COLOR_PALETTE = {
-    'Word Accuracy': 'rgba(100, 100, 250, 0.9)',     # Lighter blue-purple
-    'Phrase Accuracy': 'rgba(130, 70, 230, 0.9)',    # Medium purple
-    'Character Accuracy': 'rgba(70, 50, 200, 0.9)'   # Darker blue-purple
-}
-
-# 💡 Helper function to create the long-format data for the 3 charts
-def create_sample_df(tc_list, base_accuracy):
-    data = {
-        'Tc': [tc for tc in tc_list for _ in range(8)],
-        'subtc': ['X', 'Y', 'Z', 'y'] * 2 * len(tc_list),
-        'word acc': [base_accuracy + i * 5 for i in range(8 * len(tc_list))],
-        'phrase acc': [base_accuracy - i * 3 for i in range(8 * len(tc_list))],
-        'character acc': [base_accuracy + i * 2 for i in range(8 * len(tc_list))]
-    }
-    df = pd.DataFrame(data)
-    df.columns = ['Tc', 'subtc', 'word_acc', 'phrase_acc', 'character_acc']
-    
-    # Clean and Melt
-    acc_cols = ['word_acc', 'phrase_acc', 'character_acc']
-    df_long = pd.melt(df, id_vars=['Tc', 'subtc'], value_vars=acc_cols, var_name='Metric', value_name='Accuracy')
-    df_long['Metric'] = df_long['Metric'].str.replace('_acc', '').str.replace('_', ' ').str.title()
-    
-    metric_order = ['Word Accuracy', 'Phrase Accuracy', 'Character Accuracy']
-    df_long['Metric'] = pd.Categorical(df_long['Metric'], categories=metric_order, ordered=True)
-    return df_long
-
-# Create the dataframes for the three stacked charts
-# ❗️ You would replace these with your actual loaded and cleaned dataframes
-df_chart1 = create_sample_df(['A', 'B', 'A', 'B'], 40)
-df_chart2 = create_sample_df(['C', 'D'], 60)
-df_chart3 = create_sample_df(['E', 'F', 'G'], 80)
-
-
-# --- 1. DEFINE THE SUBPLOT GRID (3 Rows, 1 Column) ---
-
-# Define the maximum number of facets (Tc groups) across all charts
-max_facets = max(df_chart1['Tc'].nunique(), df_chart2['Tc'].nunique(), df_chart3['Tc'].nunique())
-
-final_fig = make_subplots(
-    rows=3,
-    cols=max_facets, # Use the max number of facets needed as columns
-    row_titles=["Chart 1", "Chart 2", "Chart 3"], # General title for each row
-    shared_yaxes=False, # Y-axes are independent
-    vertical_spacing=0.08,
-    horizontal_spacing=0.05, # Space between the facets (Tc groups)
-    # Define the type of spec for each cell (Bar charts use 'xy' type)
-    specs=[[{"type": "xy"}] * max_facets, 
-           [{"type": "xy"}] * max_facets, 
-           [{"type": "xy"}] * max_facets]
-)
-
-# --- 2. LOOP AND ADD TRACES (Manual Faceting) ---
-
-figures_data = [
-    (df_chart1, 1, "Chart 1: Accuracy A-B"),
-    (df_chart2, 2, "Chart 2: Accuracy C-D"),
-    (df_chart3, 3, "Chart 3: Accuracy E-G")
-]
-
-# Ensure the overall max Y-value is used for range setting
-y_max = max(df_chart1['Accuracy'].max(), df_chart2['Accuracy'].max(), df_chart3['Accuracy'].max()) * 1.2
-
-for df_long, target_row, title in figures_data:
-    unique_tcs = df_long['Tc'].unique()
-    
-    # Loop through each unique Tc (which becomes a column/facet)
-    for i, tc in enumerate(unique_tcs):
-        df_tc = df_long[df_long['Tc'] == tc]
-        col_index = i + 1 # Subplots are 1-indexed
-        
-        # 💡 Add Annotations (Facet Titles)
-        final_fig.add_annotation(
-            text=tc,
-            xref=f'x{target_row*max_facets - max_facets + col_index} domain',
-            yref=f'y{target_row*max_facets - max_facets + col_index} domain',
-            x=0.5, y=1.1, xanchor='center', showarrow=False,
-            font=dict(size=14, color='black')
+for i, tc in enumerate(tcs, start=1):
+    subdf = df[df["Tc"] == tc]
+    for metric in ["word acc", "phrase acc", "character acc"]:
+        fig.add_trace(
+            go.Bar(x=subdf["subtc"], y=subdf[metric], name=metric, showlegend=(i==1)),
+            row=1, col=i
         )
-        
-        # Loop through each Metric (Word, Phrase, Character)
-        for metric in df_tc['Metric'].unique():
-            df_metric = df_tc[df_tc['Metric'] == metric]
-            
-            bar_trace = go.Bar(
-                x=df_metric['subtc'], 
-                y=df_metric['Accuracy'],
-                name=metric,
-                marker=dict(
-                    color=COLOR_PALETTE[metric],
-                    line=dict(color='rgba(0,0,0,0.1)', width=0.5)
-                ),
-                legendgroup=metric,
-                # Only show legend entries in the first chart (row 1)
-                showlegend=(target_row == 1), 
-                text=df_metric['Accuracy'].apply(lambda x: f'{x:.1f}%%'),
-                textposition='outside',
-                hovertemplate=f'<b>Tc:</b> {tc}<br><b>Sub-Tc:</b> %{{x}}<br><b>{metric}:</b> %{{y:.1f}}%%<extra></extra>'
-            )
-            
-            # Add the trace to the specific row and column
-            final_fig.add_trace(bar_trace, row=target_row, col=col_index)
 
-
-# --- 3. FINAL GLOBAL STYLING AND CLEANUP ---
-
-final_fig.update_layout(
-    height=1500,
-    title_text="Comprehensive Multi-Chart Accuracy Dashboard",
-    title_x=0.0, # 1. Title left-aligned
-    title_font_size=24,
-    
-    paper_bgcolor='white',
-    plot_bgcolor='rgba(255,255,255,0)',
-    
-    # Legend in the same line as the title
-    legend=dict(
-        orientation="h", yanchor="middle", y=1.01, xanchor="right", x=1.0,
-        bgcolor='rgba(255,255,255,0.8)', bordercolor='rgba(0,0,0,0)', borderwidth=0
-    ),
-
-    # Bar Gaps
-    bargap=0.3,
-    bargroupgap=0.1,
+fig.update_layout(
+    barmode="group",
+    title="Grouped Bar Chart per Tc",
+    template="plotly_white",
+    width=1000,
+    height=500
 )
 
-# Apply styling to ALL axes created by the subplot system
-for i in range(1, 3 * max_facets + 1):
-    # X-Axis Cleanup (Tick Angle and removing title)
-    final_fig.update_xaxes(
-        col=i,
-        tickangle=-45,
-        showgrid=False,
-        showline=True, linecolor='lightgrey', linewidth=0.5,
-        title_text=""
-    )
-    
-    # Y-Axis Cleanup (2. Remove y-axis ticks/labels, add grid)
-    final_fig.update_yaxes(
-        row=(i - 1) // max_facets + 1, col=(i - 1) % max_facets + 1,
-        showgrid=True, gridcolor='rgba(150, 150, 150, 0.5)', gridwidth=0.5,
-        showline=False, showticklabels=False, ticks='', zeroline=False,
-        # Ensure Y-axis range is consistent across the entire row
-        range=[0, y_max] 
-    )
-
-final_fig.show()
+fig.show()
