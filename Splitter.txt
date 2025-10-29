@@ -1,421 +1,623 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch_geometric.data import HeteroData
-from torch_geometric.nn import Linear, HeteroConv, TransformerConv
-from torch_geometric.loader import NeighborLoader
-import polars as pl
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, f1_score
+import dash
+from dash import dcc, html, dash_table, Input, Output, State, callback_context
+import dash_bootstrap_components as dbc
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
 import numpy as np
-from tqdm import tqdm
-import os
-import warnings
-warnings.filterwarnings('ignore')
+from pathlib import Path
+import openpyxl
+from datetime import datetime
+import threading
+import time
 
+# Configuration
+FOLDER_PATH = "./data"  # Change this to your folder path
+REFRESH_INTERVAL = 30000  # 30 seconds in milliseconds
 
-class HeteroGraphTransformer(nn.Module):
-    """Graph Transformer for Heterogeneous Graphs with multiple edge types"""
+# Color scheme - Modern professional palette
+COLORS = {
+    'primary': '#2E86AB',
+    'secondary': '#A23B72',
+    'success': '#06A77D',
+    'warning': '#F18F01',
+    'danger': '#C73E1D',
+    'background': '#F8F9FA',
+    'card': '#FFFFFF',
+    'text': '#2C3E50',
+    'border': '#E9ECEF'
+}
+
+class DataLoader:
+    def __init__(self, folder_path):
+        self.folder_path = Path(folder_path)
+        self.data_cache = {}
+        self.last_update = None
+        
+    def load_all_data(self):
+        """Load all xlsx file pairs from the folder"""
+        summary_files = list(self.folder_path.glob("*_[0-9]*.xlsx"))
+        summary_files = [f for f in summary_files if not f.stem.endswith('_cer')]
+        
+        all_summary = []
+        all_details = []
+        
+        for summary_file in summary_files:
+            # Load summary file
+            try:
+                df_summary = pd.read_excel(summary_file)
+                df_summary['file_source'] = summary_file.stem
+                all_summary.append(df_summary)
+                
+                # Load corresponding detail file
+                detail_file = summary_file.parent / f"{summary_file.stem}_cer.xlsx"
+                if detail_file.exists():
+                    xl_file = pd.ExcelFile(detail_file)
+                    for sheet_name in xl_file.sheet_names:
+                        df_detail = pd.read_excel(detail_file, sheet_name=sheet_name)
+                        df_detail['subtc'] = sheet_name
+                        df_detail['file_source'] = summary_file.stem
+                        all_details.append(df_detail)
+            except Exception as e:
+                print(f"Error loading {summary_file}: {e}")
+        
+        self.data_cache['summary'] = pd.concat(all_summary, ignore_index=True) if all_summary else pd.DataFrame()
+        self.data_cache['details'] = pd.concat(all_details, ignore_index=True) if all_details else pd.DataFrame()
+        self.last_update = datetime.now()
+        
+        return self.data_cache
     
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers=3, 
-                 num_heads=4, dropout=0.3, edge_types=None):
-        super().__init__()
-        
-        self.num_layers = num_layers
-        self.dropout = dropout
-        
-        # Input projection
-        self.input_proj = Linear(in_channels, hidden_channels)
-        
-        # Graph Transformer layers with heterogeneous convolutions
-        self.convs = nn.ModuleList()
-        self.norms = nn.ModuleList()
-        
-        for _ in range(num_layers):
-            conv_dict = {}
-            for edge_type in edge_types:
-                conv_dict[edge_type] = TransformerConv(
-                    hidden_channels, 
-                    hidden_channels // num_heads,
-                    heads=num_heads,
-                    dropout=dropout,
-                    edge_dim=None,
-                    beta=True  # Gated attention
-                )
+    def get_data(self):
+        if not self.data_cache:
+            self.load_all_data()
+        return self.data_cache
+
+# Initialize app
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+loader = DataLoader(FOLDER_PATH)
+
+# App layout
+app.layout = dbc.Container([
+    # Store for data
+    dcc.Store(id='data-store'),
+    dcc.Interval(id='interval-component', interval=REFRESH_INTERVAL, n_intervals=0),
+    
+    # Header
+    dbc.Row([
+        dbc.Col([
+            html.H1("ASR Performance Monitoring Dashboard", 
+                   className="text-center mb-2",
+                   style={'color': COLORS['primary'], 'fontWeight': 'bold'}),
+            html.P(id='last-update', className="text-center text-muted mb-4")
+        ])
+    ]),
+    
+    # Tabs
+    dbc.Tabs([
+        # Overview Tab
+        dbc.Tab(label="Overview", tab_id="overview", children=[
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Total Utterances", className="text-muted"),
+                            html.H2(id="total-utt", className="text-primary")
+                        ])
+                    ], className="mb-3 shadow-sm")
+                ], width=3),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Avg Word Acc", className="text-muted"),
+                            html.H2(id="avg-word-acc", className="text-success")
+                        ])
+                    ], className="mb-3 shadow-sm")
+                ], width=3),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Avg Phrase Acc", className="text-muted"),
+                            html.H2(id="avg-phrase-acc", className="text-info")
+                        ])
+                    ], className="mb-3 shadow-sm")
+                ], width=3),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Avg Char Acc", className="text-muted"),
+                            html.H2(id="avg-char-acc", className="text-warning")
+                        ])
+                    ], className="mb-3 shadow-sm")
+                ], width=3),
+            ], className="mb-4"),
             
-            self.convs.append(HeteroConv(conv_dict, aggr='sum'))
-            self.norms.append(nn.LayerNorm(hidden_channels))
-        
-        # Output projection
-        self.output_proj = nn.Sequential(
-            Linear(hidden_channels, hidden_channels // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            Linear(hidden_channels // 2, out_channels)
-        )
-    
-    def forward(self, x_dict, edge_index_dict):
-        # Initial projection
-        x_dict = {key: self.input_proj(x) for key, x in x_dict.items()}
-        
-        # Graph Transformer layers with residual connections
-        for i, (conv, norm) in enumerate(zip(self.convs, self.norms)):
-            x_dict_out = conv(x_dict, edge_index_dict)
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(id='accuracy-comparison')
+                        ])
+                    ], className="shadow-sm")
+                ], width=6),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(id='tc-performance')
+                        ])
+                    ], className="shadow-sm")
+                ], width=6),
+            ], className="mb-4"),
             
-            # Residual connection and normalization
-            x_dict = {
-                key: norm(F.dropout(x_out + x_dict[key], p=self.dropout, training=self.training))
-                for key, x_out in x_dict_out.items()
-            }
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(id='heatmap-performance')
+                        ])
+                    ], className="shadow-sm")
+                ], width=12),
+            ])
+        ]),
+        
+        # Category Analysis Tab
+        dbc.Tab(label="Category Analysis", tab_id="category", children=[
+            dbc.Row([
+                dbc.Col([
+                    html.Label("Select Tc:"),
+                    dcc.Dropdown(id='tc-filter', multi=True, placeholder="All categories")
+                ], width=4),
+                dbc.Col([
+                    html.Label("Select subtc:"),
+                    dcc.Dropdown(id='subtc-filter', multi=True, placeholder="All sub-categories")
+                ], width=4),
+                dbc.Col([
+                    html.Label("Select File:"),
+                    dcc.Dropdown(id='file-filter', multi=True, placeholder="All files")
+                ], width=4),
+            ], className="mb-4 mt-3"),
             
-            # ReLU activation for hidden layers
-            if i < self.num_layers - 1:
-                x_dict = {key: F.relu(x) for key, x in x_dict.items()}
-        
-        # Output projection (only for 'flow' nodes)
-        return self.output_proj(x_dict['flow'])
-
-
-def load_and_prepare_data(feature_cols):
-    """Load graph data and prepare train/val/test splits"""
-    print("Loading data...")
-    nodes = pl.read_parquet("graph/nodes_features.parquet")
-    edges1 = pl.read_parquet("graph/edges_type1.parquet")
-    edges2 = pl.read_parquet("graph/edges_type2.parquet")
-    edges3 = pl.read_parquet("graph/edges_type3.parquet")
-    
-    # Create heterogeneous graph
-    data = HeteroData()
-    data['flow'].x = torch.tensor(nodes.select(feature_cols).to_numpy(), dtype=torch.float32)
-    data['flow'].y = torch.tensor(nodes['label'].to_numpy(), dtype=torch.long)
-    
-    # Add edges
-    data['flow', 'same_source', 'flow'].edge_index = torch.tensor(
-        [edges1['u'].to_numpy(), edges1['v'].to_numpy()], dtype=torch.long
-    )
-    data['flow', 'same_dest', 'flow'].edge_index = torch.tensor(
-        [edges2['u'].to_numpy(), edges2['v'].to_numpy()], dtype=torch.long
-    )
-    data['flow', 'bidirectional', 'flow'].edge_index = torch.tensor(
-        [edges3['u'].to_numpy(), edges3['v'].to_numpy()], dtype=torch.long
-    )
-    
-    # Create train/val/test masks
-    num_nodes = data['flow'].x.size(0)
-    indices = np.arange(num_nodes)
-    
-    # Stratified split
-    train_idx, test_idx = train_test_split(
-        indices, test_size=0.2, random_state=42, 
-        stratify=nodes['label'].to_numpy()
-    )
-    train_idx, val_idx = train_test_split(
-        train_idx, test_size=0.1, random_state=42,
-        stratify=nodes['label'].to_numpy()[train_idx]
-    )
-    
-    # Create masks
-    data['flow'].train_mask = torch.zeros(num_nodes, dtype=torch.bool)
-    data['flow'].val_mask = torch.zeros(num_nodes, dtype=torch.bool)
-    data['flow'].test_mask = torch.zeros(num_nodes, dtype=torch.bool)
-    
-    data['flow'].train_mask[train_idx] = True
-    data['flow'].val_mask[val_idx] = True
-    data['flow'].test_mask[test_idx] = True
-    
-    print(f"Total nodes: {num_nodes:,}")
-    print(f"Train: {len(train_idx):,}, Val: {len(val_idx):,}, Test: {len(test_idx):,}")
-    print(f"Edge types: same_source={edges1.shape[0]:,}, same_dest={edges2.shape[0]:,}, bidirectional={edges3.shape[0]:,}")
-    
-    return data
-
-
-def setup_ddp(rank, world_size):
-    """Initialize distributed training"""
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
-
-
-def cleanup_ddp():
-    """Cleanup distributed training"""
-    dist.destroy_process_group()
-
-
-def train_epoch(model, loader, optimizer, device, rank):
-    """Train for one epoch"""
-    model.train()
-    total_loss = 0
-    total_correct = 0
-    total_samples = 0
-    
-    if rank == 0:
-        loader = tqdm(loader, desc="Training")
-    
-    for batch in loader:
-        batch = batch.to(device)
-        optimizer.zero_grad()
-        
-        # Forward pass
-        out = model(batch.x_dict, batch.edge_index_dict)
-        
-        # Only compute loss on training nodes in this batch
-        loss = F.cross_entropy(out[batch['flow'].train_mask], 
-                              batch['flow'].y[batch['flow'].train_mask])
-        
-        # Backward pass
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-        
-        # Metrics
-        pred = out[batch['flow'].train_mask].argmax(dim=1)
-        correct = (pred == batch['flow'].y[batch['flow'].train_mask]).sum().item()
-        
-        total_loss += loss.item() * batch['flow'].train_mask.sum().item()
-        total_correct += correct
-        total_samples += batch['flow'].train_mask.sum().item()
-    
-    return total_loss / total_samples, total_correct / total_samples
-
-
-@torch.no_grad()
-def evaluate(model, loader, device, rank, mask_name='val_mask'):
-    """Evaluate model"""
-    model.eval()
-    total_loss = 0
-    total_correct = 0
-    total_samples = 0
-    all_preds = []
-    all_labels = []
-    
-    if rank == 0:
-        loader = tqdm(loader, desc=f"Evaluating ({mask_name})")
-    
-    for batch in loader:
-        batch = batch.to(device)
-        
-        # Forward pass
-        out = model(batch.x_dict, batch.edge_index_dict)
-        
-        # Get mask
-        mask = getattr(batch['flow'], mask_name)
-        
-        if mask.sum() > 0:
-            loss = F.cross_entropy(out[mask], batch['flow'].y[mask])
-            pred = out[mask].argmax(dim=1)
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(id='subtc-breakdown')
+                        ])
+                    ], className="shadow-sm")
+                ], width=12),
+            ], className="mb-4"),
             
-            total_loss += loss.item() * mask.sum().item()
-            total_correct += (pred == batch['flow'].y[mask]).sum().item()
-            total_samples += mask.sum().item()
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Detailed Metrics Table"),
+                            dash_table.DataTable(
+                                id='summary-table',
+                                style_table={'overflowX': 'auto'},
+                                style_cell={'textAlign': 'left', 'padding': '10px'},
+                                style_header={
+                                    'backgroundColor': COLORS['primary'],
+                                    'color': 'white',
+                                    'fontWeight': 'bold'
+                                },
+                                style_data_conditional=[
+                                    {
+                                        'if': {'row_index': 'odd'},
+                                        'backgroundColor': COLORS['background']
+                                    }
+                                ],
+                                page_size=15,
+                                sort_action='native',
+                                filter_action='native'
+                            )
+                        ])
+                    ], className="shadow-sm")
+                ], width=12),
+            ])
+        ]),
+        
+        # Error Analysis Tab
+        dbc.Tab(label="Error Analysis", tab_id="error", children=[
+            dbc.Row([
+                dbc.Col([
+                    html.Label("Filter by subtc:"),
+                    dcc.Dropdown(id='error-subtc-filter', placeholder="Select sub-category")
+                ], width=6),
+                dbc.Col([
+                    html.Label("Filter by Result:"),
+                    dcc.Dropdown(
+                        id='result-filter',
+                        options=[
+                            {'label': 'All', 'value': 'ALL'},
+                            {'label': 'PASS', 'value': 'PASS'},
+                            {'label': 'FAIL', 'value': 'FAIL'}
+                        ],
+                        value='ALL'
+                    )
+                ], width=6),
+            ], className="mb-4 mt-3"),
             
-            all_preds.extend(pred.cpu().numpy())
-            all_labels.extend(batch['flow'].y[mask].cpu().numpy())
-    
-    avg_loss = total_loss / total_samples if total_samples > 0 else 0
-    accuracy = total_correct / total_samples if total_samples > 0 else 0
-    
-    # Calculate F1 score
-    f1_macro = f1_score(all_labels, all_preds, average='macro', zero_division=0)
-    f1_weighted = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
-    
-    return avg_loss, accuracy, f1_macro, f1_weighted, all_preds, all_labels
-
-
-def train_worker(rank, world_size, data, feature_cols, config):
-    """Training worker for each GPU"""
-    
-    # Setup DDP
-    setup_ddp(rank, world_size)
-    device = torch.device(f'cuda:{rank}')
-    
-    # Create neighbor loaders for mini-batch training
-    train_loader = NeighborLoader(
-        data,
-        num_neighbors=[15, 10, 5],  # 3-hop neighborhood sampling
-        batch_size=config['batch_size'],
-        input_nodes=('flow', data['flow'].train_mask),
-        shuffle=True,
-        num_workers=4,
-        persistent_workers=True
-    )
-    
-    val_loader = NeighborLoader(
-        data,
-        num_neighbors=[15, 10, 5],
-        batch_size=config['batch_size'] * 2,
-        input_nodes=('flow', data['flow'].val_mask),
-        shuffle=False,
-        num_workers=4,
-        persistent_workers=True
-    )
-    
-    # Initialize model
-    edge_types = [
-        ('flow', 'same_source', 'flow'),
-        ('flow', 'same_dest', 'flow'),
-        ('flow', 'bidirectional', 'flow')
-    ]
-    
-    model = HeteroGraphTransformer(
-        in_channels=len(feature_cols),
-        hidden_channels=config['hidden_channels'],
-        out_channels=config['num_classes'],
-        num_layers=config['num_layers'],
-        num_heads=config['num_heads'],
-        dropout=config['dropout'],
-        edge_types=edge_types
-    ).to(device)
-    
-    # Wrap model with DDP
-    model = DDP(model, device_ids=[rank], find_unused_parameters=False)
-    
-    # Optimizer and scheduler
-    optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=config['learning_rate'],
-        weight_decay=config['weight_decay']
-    )
-    
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, 
-        T_max=config['epochs'],
-        eta_min=1e-6
-    )
-    
-    # Training loop
-    best_val_f1 = 0
-    patience_counter = 0
-    
-    for epoch in range(config['epochs']):
-        if rank == 0:
-            print(f"\n{'='*50}")
-            print(f"Epoch {epoch + 1}/{config['epochs']}")
-            print(f"{'='*50}")
-        
-        # Train
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, rank)
-        
-        # Validate
-        val_loss, val_acc, val_f1_macro, val_f1_weighted, _, _ = evaluate(
-            model, val_loader, device, rank, 'val_mask'
-        )
-        
-        scheduler.step()
-        
-        if rank == 0:
-            print(f"\nTrain Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
-            print(f"Val F1 (Macro): {val_f1_macro:.4f}, Val F1 (Weighted): {val_f1_weighted:.4f}")
-            print(f"Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(id='pass-fail-chart')
+                        ])
+                    ], className="shadow-sm")
+                ], width=6),
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            dcc.Graph(id='error-distribution')
+                        ])
+                    ], className="shadow-sm")
+                ], width=6),
+            ], className="mb-4"),
             
-            # Save best model
-            if val_f1_weighted > best_val_f1:
-                best_val_f1 = val_f1_weighted
-                patience_counter = 0
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.module.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'val_f1': val_f1_weighted,
-                }, 'best_model.pt')
-                print(f"✓ Saved best model (F1: {best_val_f1:.4f})")
-            else:
-                patience_counter += 1
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Utterance Details"),
+                            dash_table.DataTable(
+                                id='error-table',
+                                style_table={'overflowX': 'auto'},
+                                style_cell={
+                                    'textAlign': 'left',
+                                    'padding': '10px',
+                                    'whiteSpace': 'normal',
+                                    'height': 'auto',
+                                },
+                                style_header={
+                                    'backgroundColor': COLORS['primary'],
+                                    'color': 'white',
+                                    'fontWeight': 'bold'
+                                },
+                                style_data_conditional=[
+                                    {
+                                        'if': {'row_index': 'odd'},
+                                        'backgroundColor': COLORS['background']
+                                    },
+                                    {
+                                        'if': {
+                                            'filter_query': '{result} = "FAIL"',
+                                            'column_id': 'result'
+                                        },
+                                        'backgroundColor': '#FFE5E5',
+                                        'color': COLORS['danger']
+                                    },
+                                    {
+                                        'if': {
+                                            'filter_query': '{result} = "PASS"',
+                                            'column_id': 'result'
+                                        },
+                                        'backgroundColor': '#E5F9F0',
+                                        'color': COLORS['success']
+                                    }
+                                ],
+                                page_size=20,
+                                sort_action='native',
+                                filter_action='native'
+                            )
+                        ])
+                    ], className="shadow-sm")
+                ], width=12),
+            ])
+        ]),
+        
+        # Utterance Inspector Tab
+        dbc.Tab(label="Utterance Inspector", tab_id="inspector", children=[
+            dbc.Row([
+                dbc.Col([
+                    html.Label("Search in Reference/Hypothesis:"),
+                    dcc.Input(
+                        id='search-input',
+                        type='text',
+                        placeholder='Enter text to search...',
+                        className='form-control mb-3'
+                    )
+                ], width=12),
+            ], className="mt-3"),
             
-            # Early stopping
-            if patience_counter >= config['patience']:
-                print(f"\nEarly stopping triggered after {epoch + 1} epochs")
-                break
-    
-    # Test evaluation on rank 0
-    if rank == 0:
-        print(f"\n{'='*50}")
-        print("Final Evaluation on Test Set")
-        print(f"{'='*50}")
-        
-        # Load best model
-        checkpoint = torch.load('best_model.pt')
-        model.module.load_state_dict(checkpoint['model_state_dict'])
-        
-        test_loader = NeighborLoader(
-            data,
-            num_neighbors=[15, 10, 5],
-            batch_size=config['batch_size'] * 2,
-            input_nodes=('flow', data['flow'].test_mask),
-            shuffle=False,
-            num_workers=4,
-            persistent_workers=True
-        )
-        
-        test_loss, test_acc, test_f1_macro, test_f1_weighted, preds, labels = evaluate(
-            model, test_loader, device, rank, 'test_mask'
-        )
-        
-        print(f"\nTest Loss: {test_loss:.4f}")
-        print(f"Test Accuracy: {test_acc:.4f}")
-        print(f"Test F1 (Macro): {test_f1_macro:.4f}")
-        print(f"Test F1 (Weighted): {test_f1_weighted:.4f}")
-        
-        # Classification report
-        print("\n" + "="*50)
-        print("Classification Report:")
-        print("="*50)
-        print(classification_report(labels, preds, 
-                                   target_names=[f'Class_{i}' for i in range(config['num_classes'])],
-                                   digits=4))
-    
-    cleanup_ddp()
+            dbc.Row([
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.H4("Search Results"),
+                            dash_table.DataTable(
+                                id='search-table',
+                                style_table={'overflowX': 'auto'},
+                                style_cell={
+                                    'textAlign': 'left',
+                                    'padding': '10px',
+                                    'whiteSpace': 'normal',
+                                    'height': 'auto',
+                                    'minWidth': '100px',
+                                },
+                                style_header={
+                                    'backgroundColor': COLORS['primary'],
+                                    'color': 'white',
+                                    'fontWeight': 'bold'
+                                },
+                                style_data_conditional=[
+                                    {
+                                        'if': {'row_index': 'odd'},
+                                        'backgroundColor': COLORS['background']
+                                    }
+                                ],
+                                page_size=25,
+                                sort_action='native'
+                            )
+                        ])
+                    ], className="shadow-sm")
+                ], width=12),
+            ])
+        ]),
+    ], id="tabs", active_tab="overview")
+], fluid=True, style={'backgroundColor': COLORS['background'], 'padding': '20px'})
 
+# Callbacks
+@app.callback(
+    [Output('data-store', 'data'),
+     Output('last-update', 'children')],
+    [Input('interval-component', 'n_intervals')]
+)
+def update_data(n):
+    data = loader.load_all_data()
+    update_time = loader.last_update.strftime("%Y-%m-%d %H:%M:%S") if loader.last_update else "Never"
+    return data, f"Last updated: {update_time}"
 
-def main():
-    """Main training function"""
+# Update filter options
+@app.callback(
+    [Output('tc-filter', 'options'),
+     Output('subtc-filter', 'options'),
+     Output('file-filter', 'options'),
+     Output('error-subtc-filter', 'options')],
+    [Input('data-store', 'data')]
+)
+def update_filters(data):
+    if not data or data['summary'].empty:
+        return [], [], [], []
     
-    # Configuration
-    config = {
-        'batch_size': 4096,  # Large batch size for efficiency
-        'hidden_channels': 256,
-        'num_layers': 3,
-        'num_heads': 4,
-        'dropout': 0.3,
-        'learning_rate': 0.001,
-        'weight_decay': 1e-4,
-        'epochs': 100,
-        'patience': 15,
-        'num_classes': 10,  # Normal + 9 attack types
-    }
+    df = pd.DataFrame(data['summary'])
+    tc_options = [{'label': tc, 'value': tc} for tc in sorted(df['Tc'].unique())]
+    subtc_options = [{'label': subtc, 'value': subtc} for subtc in sorted(df['subtc'].unique())]
+    file_options = [{'label': f, 'value': f} for f in sorted(df['file_source'].unique())]
     
-    # Define your feature columns
-    feature_cols = [
-        # Add your actual feature column names here
-        # Example: 'duration', 'protocol', 'src_bytes', 'dst_bytes', etc.
-    ]
+    return tc_options, subtc_options, file_options, subtc_options
+
+# Update KPIs
+@app.callback(
+    [Output('total-utt', 'children'),
+     Output('avg-word-acc', 'children'),
+     Output('avg-phrase-acc', 'children'),
+     Output('avg-char-acc', 'children')],
+    [Input('data-store', 'data')]
+)
+def update_kpis(data):
+    if not data or data['summary'].empty:
+        return "0", "0%", "0%", "0%"
     
-    # Load data
-    data = load_and_prepare_data(feature_cols)
+    df = pd.DataFrame(data['summary'])
     
-    # Get number of available GPUs
-    world_size = torch.cuda.device_count()
-    print(f"\n{'='*50}")
-    print(f"Training on {world_size} GPUs")
-    print(f"{'='*50}\n")
+    # Normalize column names
+    df.columns = df.columns.str.strip().str.lower()
     
-    if world_size > 1:
-        # Multi-GPU training with DDP
-        mp.spawn(
-            train_worker,
-            args=(world_size, data, feature_cols, config),
-            nprocs=world_size,
-            join=True
+    total_utt = f"{len(df):,}"
+    avg_word = f"{df['word acc'].mean():.1f}%" if 'word acc' in df.columns else "N/A"
+    avg_phrase = f"{df['phrase acc'].mean():.1f}%" if 'phrase acc' in df.columns else "N/A"
+    avg_char = f"{df['character acc'].mean():.1f}%" if 'character acc' in df.columns else "N/A"
+    
+    return total_utt, avg_word, avg_phrase, avg_char
+
+# Update charts
+@app.callback(
+    [Output('accuracy-comparison', 'figure'),
+     Output('tc-performance', 'figure'),
+     Output('heatmap-performance', 'figure')],
+    [Input('data-store', 'data')]
+)
+def update_overview_charts(data):
+    if not data or data['summary'].empty:
+        empty_fig = go.Figure()
+        empty_fig.add_annotation(text="No data available", showarrow=False)
+        return empty_fig, empty_fig, empty_fig
+    
+    df = pd.DataFrame(data['summary'])
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # Accuracy comparison
+    acc_cols = ['word acc', 'phrase acc', 'character acc']
+    acc_cols = [col for col in acc_cols if col in df.columns]
+    avg_accs = df[acc_cols].mean()
+    
+    fig1 = go.Figure(data=[
+        go.Bar(x=avg_accs.index, y=avg_accs.values,
+               marker_color=[COLORS['success'], COLORS['primary'], COLORS['warning']])
+    ])
+    fig1.update_layout(
+        title="Average Accuracy Metrics",
+        xaxis_title="Metric Type",
+        yaxis_title="Accuracy (%)",
+        template="plotly_white"
+    )
+    
+    # Performance by Tc
+    tc_col = 'tc' if 'tc' in df.columns else 'Tc' if 'Tc' in df.columns else None
+    if tc_col:
+        tc_perf = df.groupby(tc_col)[acc_cols].mean().reset_index()
+        fig2 = go.Figure()
+        for col in acc_cols:
+            fig2.add_trace(go.Bar(name=col, x=tc_perf[tc_col], y=tc_perf[col]))
+        fig2.update_layout(
+            title="Performance by Category (Tc)",
+            xaxis_title="Category",
+            yaxis_title="Accuracy (%)",
+            barmode='group',
+            template="plotly_white"
         )
     else:
-        # Single GPU training
-        train_worker(0, 1, data, feature_cols, config)
+        fig2 = go.Figure()
+        fig2.add_annotation(text="Tc column not found", showarrow=False)
+    
+    # Heatmap
+    if tc_col and 'subtc' in df.columns:
+        pivot_data = df.pivot_table(values='word acc', index=tc_col, columns='subtc', aggfunc='mean')
+        fig3 = go.Figure(data=go.Heatmap(
+            z=pivot_data.values,
+            x=pivot_data.columns,
+            y=pivot_data.index,
+            colorscale='RdYlGn',
+            text=pivot_data.values,
+            texttemplate='%{text:.1f}',
+            textfont={"size": 10}
+        ))
+        fig3.update_layout(
+            title="Performance Heatmap (Tc vs subtc)",
+            xaxis_title="Sub-category",
+            yaxis_title="Category",
+            template="plotly_white"
+        )
+    else:
+        fig3 = go.Figure()
+        fig3.add_annotation(text="Insufficient data for heatmap", showarrow=False)
+    
+    return fig1, fig2, fig3
 
+# Category analysis callbacks
+@app.callback(
+    [Output('subtc-breakdown', 'figure'),
+     Output('summary-table', 'data'),
+     Output('summary-table', 'columns')],
+    [Input('data-store', 'data'),
+     Input('tc-filter', 'value'),
+     Input('subtc-filter', 'value'),
+     Input('file-filter', 'value')]
+)
+def update_category_analysis(data, tc_filter, subtc_filter, file_filter):
+    if not data or data['summary'].empty:
+        empty_fig = go.Figure()
+        empty_fig.add_annotation(text="No data available", showarrow=False)
+        return empty_fig, [], []
+    
+    df = pd.DataFrame(data['summary'])
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # Apply filters
+    tc_col = 'tc' if 'tc' in df.columns else 'Tc' if 'Tc' in df.columns else None
+    if tc_filter and tc_col:
+        df = df[df[tc_col].isin(tc_filter)]
+    if subtc_filter:
+        df = df[df['subtc'].isin(subtc_filter)]
+    if file_filter:
+        df = df[df['file_source'].isin(file_filter)]
+    
+    # Subtc breakdown
+    if 'subtc' in df.columns:
+        subtc_perf = df.groupby('subtc')[['word acc', 'phrase acc', 'character acc']].mean().reset_index()
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name='Word Acc', x=subtc_perf['subtc'], y=subtc_perf['word acc']))
+        fig.add_trace(go.Bar(name='Phrase Acc', x=subtc_perf['subtc'], y=subtc_perf['phrase acc']))
+        fig.add_trace(go.Bar(name='Char Acc', x=subtc_perf['subtc'], y=subtc_perf['character acc']))
+        fig.update_layout(
+            title="Performance by Sub-category",
+            xaxis_title="Sub-category",
+            yaxis_title="Accuracy (%)",
+            barmode='group',
+            template="plotly_white"
+        )
+    else:
+        fig = go.Figure()
+        fig.add_annotation(text="No subtc data available", showarrow=False)
+    
+    # Table data
+    table_data = df.to_dict('records')
+    columns = [{"name": col, "id": col} for col in df.columns]
+    
+    return fig, table_data, columns
 
-if __name__ == "__main__":
-    main()
+# Error analysis callbacks
+@app.callback(
+    [Output('pass-fail-chart', 'figure'),
+     Output('error-distribution', 'figure'),
+     Output('error-table', 'data'),
+     Output('error-table', 'columns')],
+    [Input('data-store', 'data'),
+     Input('error-subtc-filter', 'value'),
+     Input('result-filter', 'value')]
+)
+def update_error_analysis(data, subtc_filter, result_filter):
+    if not data or data['details'].empty:
+        empty_fig = go.Figure()
+        empty_fig.add_annotation(text="No data available", showarrow=False)
+        return empty_fig, empty_fig, [], []
+    
+    df = pd.DataFrame(data['details'])
+    df.columns = df.columns.str.strip()
+    
+    # Apply filters
+    if subtc_filter:
+        df = df[df['subtc'] == subtc_filter]
+    if result_filter and result_filter != 'ALL':
+        df = df[df['result'] == result_filter]
+    
+    # Pass/Fail chart
+    if 'result' in df.columns:
+        result_counts = df['result'].value_counts()
+        fig1 = go.Figure(data=[go.Pie(
+            labels=result_counts.index,
+            values=result_counts.values,
+            marker_colors=[COLORS['success'] if x == 'PASS' else COLORS['danger'] for x in result_counts.index]
+        )])
+        fig1.update_layout(title="Pass/Fail Distribution", template="plotly_white")
+    else:
+        fig1 = go.Figure()
+        fig1.add_annotation(text="No result data available", showarrow=False)
+    
+    # Error distribution by subtc
+    if 'subtc' in df.columns and 'result' in df.columns:
+        error_dist = df.groupby(['subtc', 'result']).size().reset_index(name='count')
+        fig2 = px.bar(error_dist, x='subtc', y='count', color='result',
+                      color_discrete_map={'PASS': COLORS['success'], 'FAIL': COLORS['danger']},
+                      title="Error Distribution by Sub-category")
+        fig2.update_layout(template="plotly_white")
+    else:
+        fig2 = go.Figure()
+        fig2.add_annotation(text="Insufficient data for distribution", showarrow=False)
+    
+    # Table data
+    table_data = df.to_dict('records')
+    columns = [{"name": col, "id": col} for col in df.columns]
+    
+    return fig1, fig2, table_data, columns
+
+# Search functionality
+@app.callback(
+    [Output('search-table', 'data'),
+     Output('search-table', 'columns')],
+    [Input('search-input', 'value'),
+     Input('data-store', 'data')]
+)
+def search_utterances(search_term, data):
+    if not data or data['details'].empty or not search_term:
+        return [], []
+    
+    df = pd.DataFrame(data['details'])
+    df.columns = df.columns.str.strip()
+    
+    # Search in Reference and hypothesis columns
+    mask = False
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            mask = mask | df[col].str.contains(search_term, case=False, na=False)
+    
+    filtered_df = df[mask]
+    
+    table_data = filtered_df.to_dict('records')
+    columns = [{"name": col, "id": col} for col in filtered_df.columns]
+    
+    return table_data, columns
+
+if __name__ == '__main__':
+    app.run_server(debug=True, host='0.0.0.0', port=8050)
