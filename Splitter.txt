@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Example DataFrame
+# Dummy data
 df = pd.DataFrame({
     "Tc": ["A", "A", "B", "B"],
     "subtc": ["X", "Y", "X", "Y"],
@@ -11,44 +11,37 @@ df = pd.DataFrame({
     "character acc": [12, 54, 12, 12],
 })
 
-# Define metrics and colors (consistent across subplots)
-metrics = ["word acc", "phrase acc", "character acc"]
-colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]  # blue, orange, green
-
-# Unique Tc values (one subplot per Tc)
-tcs = df["Tc"].unique()
-
-# Create subplot layout
+# Example layout: 2 rows, 2 columns
 fig = make_subplots(
-    rows=1, 
-    cols=len(tcs), 
-    subplot_titles=[f"Tc = {t}" for t in tcs]
+    rows=2, cols=2,
+    subplot_titles=["Tc = A1", "Tc = A2", "Tc = B1", "Tc = B2"]
 )
 
-# Add grouped bars for each Tc
-for i, tc in enumerate(tcs, start=1):
-    subdf = df[df["Tc"] == tc]
-    for metric, color in zip(metrics, colors):
-        fig.add_trace(
-            go.Bar(
-                x=subdf["subtc"], 
-                y=subdf[metric],
-                name=metric,
-                marker_color=color,
-                showlegend=(i == 1)  # only show legend once
-            ),
-            row=1, col=i
-        )
+# (Just an example trace)
+for i in range(1, 3):
+    for j in range(1, 3):
+        fig.add_trace(go.Bar(x=["X", "Y"], y=[i * 10, j * 20]), row=i, col=j)
 
-# Layout configuration
+# Add row titles manually (annotations)
+row_titles = ["Group 1", "Group 2"]
+for i, title in enumerate(row_titles, start=1):
+    fig.add_annotation(
+        text=title,
+        xref="paper",
+        yref="paper",
+        x=-0.07,             # position left of the plot
+        y=1 - (i - 1) / len(row_titles),  # evenly spaced vertically
+        xanchor="right",
+        yanchor="middle",
+        showarrow=False,
+        font=dict(size=14, color="black")
+    )
+
 fig.update_layout(
-    barmode="group",
-    title="Grouped Bar Chart per Tc (colored by metric)",
+    title="Grouped Bar Chart with Row Titles",
     template="plotly_white",
-    width=1000,
-    height=500,
-    legend_title="Metrics",
-    font=dict(size=13)
+    height=600,
+    width=900
 )
 
 fig.show()
