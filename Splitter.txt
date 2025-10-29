@@ -1,23 +1,54 @@
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-tcs = df["Tc"].unique()
-fig = make_subplots(rows=1, cols=len(tcs), subplot_titles=[f"Tc = {t}" for t in tcs])
+# Example DataFrame
+df = pd.DataFrame({
+    "Tc": ["A", "A", "B", "B"],
+    "subtc": ["X", "Y", "X", "Y"],
+    "word acc": [12, 43, 85, 74],
+    "phrase acc": [12, 21, 9, 92],
+    "character acc": [12, 54, 12, 12],
+})
 
+# Define metrics and colors (consistent across subplots)
+metrics = ["word acc", "phrase acc", "character acc"]
+colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]  # blue, orange, green
+
+# Unique Tc values (one subplot per Tc)
+tcs = df["Tc"].unique()
+
+# Create subplot layout
+fig = make_subplots(
+    rows=1, 
+    cols=len(tcs), 
+    subplot_titles=[f"Tc = {t}" for t in tcs]
+)
+
+# Add grouped bars for each Tc
 for i, tc in enumerate(tcs, start=1):
     subdf = df[df["Tc"] == tc]
-    for metric in ["word acc", "phrase acc", "character acc"]:
+    for metric, color in zip(metrics, colors):
         fig.add_trace(
-            go.Bar(x=subdf["subtc"], y=subdf[metric], name=metric, showlegend=(i==1)),
+            go.Bar(
+                x=subdf["subtc"], 
+                y=subdf[metric],
+                name=metric,
+                marker_color=color,
+                showlegend=(i == 1)  # only show legend once
+            ),
             row=1, col=i
         )
 
+# Layout configuration
 fig.update_layout(
     barmode="group",
-    title="Grouped Bar Chart per Tc",
+    title="Grouped Bar Chart per Tc (colored by metric)",
     template="plotly_white",
     width=1000,
-    height=500
+    height=500,
+    legend_title="Metrics",
+    font=dict(size=13)
 )
 
 fig.show()
