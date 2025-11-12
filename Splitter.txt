@@ -1,24 +1,27 @@
-from torch_geometric.loader import NeighborSampler
-from torch_sparse import SparseTensor
+import pikepdf
+import pdfplumber
+import json
 
-# Build adjacency as SparseTensor
-adj_t = SparseTensor(row=edge_index[0], col=edge_index[1],
-                     sparse_sizes=(num_nodes, num_nodes))
+# If encrypted, open with password first
+pdf = pikepdf.open('encrypted.pdf', password='your_password')
+pdf.save('temp_decrypted.pdf')
 
-# Create sampler
-train_loader = NeighborSampler(
-    adj_t,
-    node_idx=torch.arange(num_nodes),  # which nodes to sample from
-    sizes=[15, 10, 5],                 # sample 15, 10, 5 neighbors per layer
-    batch_size=1024,
-    shuffle=True,
-)
-
-# Each iteration returns:
-#  - batch_size (int)
-#  - n_id (list of node indices involved)
-#  - adjs (list of SparseTensors for each GNN layer)
-for batch_size, n_id, adjs in train_loader:
-    # You must manually get x[n_id] and y[n_id] yourself
-    x_batch = x[n_id]
-    out = model(x_batch, adjs)
+# Extract text with better formatting
+with pdfplumber.open('temp_decrypted.pdf') as pdf:
+    # Save as .txt
+    with open('output.txt', 'w', encoding='utf-8') as txt_file:
+        for page in pdf.pages:
+            txt_file.write(page.extract_text() + "\n\n")
+    
+    # Save as .json with more details
+    pages_data = []
+    for page in pdf.pages:
+        pages_data.append({
+            "page_number": page.page_number,
+            "text": page.extract_text(),
+            "width": page.width,
+            "height": page.height
+        })
+    
+    with open('output.json', 'w', encoding='utf-8') as json_file:
+        json.dump(pages_data, json_file, ensure_ascii=False, indent=2)
