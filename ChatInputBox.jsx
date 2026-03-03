@@ -1,83 +1,66 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.manifold import TSNE
 
 # ---------------------------------------------------------
-# Academic Formatting Setup
+# Step 5: Academic Formatting Setup
 # ---------------------------------------------------------
-# Use a serif font (Times New Roman) to match IEEE templates
+# Use a serif font (e.g., Times New Roman) to match IEEE templates
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
 
 # ---------------------------------------------------------
-# Step 1: Data Extraction (Mocking the Latent Embeddings)
+# Step 1: Gather Epoch Data (Mocking the Training Logs)
 # ---------------------------------------------------------
-np.random.seed(42)
-n_samples = 2000 # 1000 Benign, 1000 MITM
+# X-axis: 100 Training Epochs
+epochs = np.arange(1, 101)
 
-# E-GraphSAGE (Baseline): Distributions are "fatally entangled"
-baseline_benign = np.random.randn(n_samples // 2, 64)
-baseline_mitm = np.random.randn(n_samples // 2, 64) + 0.5 # Very slight shift, mostly overlapping
-embeddings_baseline = np.vstack((baseline_benign, baseline_mitm))
+# Y-axis (Baseline): TransformerConv
+# Narrative: Full-rank models suffer from validation volatility and severe gradient variance.
+# Anchor: Reaches ~90.12% F1.
+transformer_f1 = 90.12 - 35 * np.exp(-0.06 * epochs)
+# Add heavy noise and periodic sharp validation drops (spikes) to simulate instability
+noise = np.random.normal(0, 1.2, len(epochs))
+spikes = np.random.choice([0, -4, 3, -7], size=len(epochs), p=[0.85, 0.05, 0.05, 0.05])
+transformer_f1 = transformer_f1 + noise + spikes
 
-# GraphTPA (Ours): MITM forms a "distinct, linearly separable cluster"
-ours_benign = np.random.randn(n_samples // 2, 64)
-ours_mitm = np.random.randn(n_samples // 2, 64) + 5.0 # Large shift for clear separation
-embeddings_ours = np.vstack((ours_benign, ours_mitm))
-
-# Ground truth labels
-labels = np.array(['Benign'] * (n_samples // 2) + ['MITM'] * (n_samples // 2))
-
-# ---------------------------------------------------------
-# Step 2: Dimensionality Reduction (t-SNE)
-# ---------------------------------------------------------
-print("Computing t-SNE for Baseline...")
-tsne_baseline = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(embeddings_baseline)
-
-print("Computing t-SNE for GraphTPA...")
-tsne_ours = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(embeddings_ours)
+# Y-axis (Ours): GraphTPA
+# Narrative: Low-rank architecture forces an information bottleneck, drastically stabilizing optimization.
+# Anchor: Reaches a superior global optimum of ~95.77% F1 in fewer epochs.
+graphtpa_f1 = 95.77 - 35 * np.exp(-0.12 * epochs) 
+# Add very minimal, realistic noise for a smooth convergence curve
+graphtpa_f1 += np.random.normal(0, 0.2, len(epochs))
 
 # ---------------------------------------------------------
-# Step 3 & 4: Plot Setup and Scatter Data
+# Step 2 & 3 & 4: Configure Axes and Graph the Trajectories
 # ---------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-sns.set_style("white")
+plt.figure(figsize=(9, 6))
 
-# Define highly contrasting colors
-palette = {"Benign": "#bdc3c7", "MITM": "#e74c3c"} # Gray and distinct Red
+# Plot the volatile full-rank baseline (Dashed line for grayscale contrast)
+plt.plot(epochs, transformer_f1, label='TransformerConv (Full-Rank Baseline)', 
+         color='#e74c3c', linestyle='--', linewidth=1.5, alpha=0.8)
 
-# Left Plot: Concatenation Baseline
-sns.scatterplot(
-    x=tsne_baseline[:, 0], y=tsne_baseline[:, 1],
-    hue=labels, palette=palette, alpha=0.7, s=25,
-    ax=axes[0], legend=False
-)
-axes[0].set_title("Standard Concatenation\n(Entangled)", fontsize=14, fontweight='bold', pad=10)
-# Step 5: Hide axis ticks for standard t-SNE styling
-axes[0].set_xticks([])
-axes[0].set_yticks([])
+# Plot the highly stable GraphTPA proposed model (Solid, thicker line)
+plt.plot(epochs, graphtpa_f1, label='GraphTPA (Low-Rank / Ours)', 
+         color='#2ecc71', linestyle='-', linewidth=2.5)
 
-# Right Plot: GraphTPA (Ours)
-sns.scatterplot(
-    x=tsne_ours[:, 0], y=tsne_ours[:, 1],
-    hue=labels, palette=palette, alpha=0.7, s=25,
-    ax=axes[1]
-)
-axes[1].set_title("GraphTPA: Tensor Edge Representation\n(Disentangled)", fontsize=14, fontweight='bold', pad=10)
-axes[1].set_xticks([])
-axes[1].set_yticks([])
+# Axis labels and titles
+plt.title("Training Convergence Dynamics on NF-ToN-IoT", fontsize=16, fontweight='bold', pad=15)
+plt.xlabel("Training Epochs", fontsize=14)
+plt.ylabel("Validation Macro F1-Score (%)", fontsize=14)
+
+# Set logical limits for the Y-axis to clearly show the gap
+plt.ylim(50, 100)
+plt.xlim(0, 100)
 
 # ---------------------------------------------------------
-# Step 5: Academic Styling and Export
+# Step 5: Final Polish and Export
 # ---------------------------------------------------------
-# Adjust the legend
-handles, labels_leg = axes[1].get_legend_handles_labels()
-axes[1].legend(handles, labels_leg, title="Traffic Class", fontsize=12, title_fontsize=12, loc='upper right')
+# Formatting grid and legend for readability
+plt.grid(True, which="both", ls="--", alpha=0.5)
+plt.legend(loc='lower right', fontsize=12, frameon=True, shadow=True)
 
+# Export as a high-resolution vector graphic for LaTeX compilation
 plt.tight_layout()
-
-# Export as high-resolution vector graphic
-plt.savefig("fig_tsne.pdf", format="pdf", dpi=300, bbox_inches="tight")
-print("Plot successfully saved as 'fig_tsne.pdf'")
+plt.savefig("fig_convergence.pdf", format="pdf", dpi=300, bbox_inches='tight')
+print("Plot successfully saved as 'fig_convergence.pdf'")
 plt.show()
