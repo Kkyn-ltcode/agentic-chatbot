@@ -1,25 +1,38 @@
-from sklearn.metrics import f1_score, classification_report
+import wandb
+import pandas as pd
+from sklearn.metrics import classification_report
 
-# Assuming you already ran this from step 4:
-# preds_proba = model.predict(dtest)
-# preds_labels = np.argmax(preds_proba, axis=1)
+# 1. Initialize your W&B run (if you haven't already at the top of your script)
+run = wandb.init(project="xgboost-16M", name="xgb-multiclass-eval")
 
-# --- 1. MACRO F1 SCORE ---
-# Calculates F1 for each of the 10 classes separately, then takes the unweighted mean.
-# Use this if you care about your model performing well on ALL classes equally, 
-# even the rare ones.
-f1_macro = f1_score(y_test, preds_labels, average='macro')
-print(f"Macro F1 Score: {f1_macro:.4f}")
+# 2. Get the report as a DICTIONARY instead of a string
+# output_dict=True is the magic parameter here
+report_dict = classification_report(y_test, preds_labels, output_dict=True)
 
-# --- 2. WEIGHTED F1 SCORE ---
-# Calculates F1 for each class, but weights the average by the number of true instances in each class.
-# Use this if your classes are heavily imbalanced and you want the metric to reflect that.
-f1_weighted = f1_score(y_test, preds_labels, average='weighted')
-print(f"Weighted F1 Score: {f1_weighted:.4f}")
+# 3. Convert the dictionary into a Pandas DataFrame for clean formatting
+# We use .transpose() so the 10 classes are the rows, and precision/recall/f1 are the columns
+df_report = pd.DataFrame(report_dict).transpose()
 
-# --- 3. THE FULL BREAKDOWN (Highly Recommended) ---
-# Since you have 10 classes, seeing a single number doesn't tell the whole story.
-# This report shows you the Precision, Recall, and F1 score for EVERY single class (0 through 9).
-print("\n--- Detailed Classification Report ---")
-report = classification_report(y_test, preds_labels)
-print(report)
+# 4. Save it locally as a CSV file
+report_filename = "classification_report.csv"
+df_report.to_csv(report_filename, index=True)
+
+# 5. Create the W&B Artifact
+# 'name' is what it will be called in the UI
+# 'type' helps you organize your artifacts (e.g., 'model', 'dataset', 'evaluation')
+eval_artifact = wandb.Artifact(
+    name="xgb_classification_report", 
+    type="evaluation",
+    description="Full classification report for the 10-class XGBoost model"
+)
+
+# 6. Attach the CSV file to the artifact
+eval_artifact.add_file(report_filename)
+
+# 7. Log the artifact to the W&B servers
+run.log_artifact(eval_artifact)
+
+print("Classification report successfully saved to W&B Artifacts!")
+
+# Optional: Close the run when your script is totally finished
+# wandb.finish()
