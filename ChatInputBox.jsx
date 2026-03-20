@@ -1,23 +1,17 @@
 import numpy as np
-import pandas as pd
 
-# Assuming X is your features DataFrame (16M rows, 44 columns)
+# 1. Identify only the numeric columns (ignores categories/strings)
+numeric_cols = X.select_dtypes(include=[np.number]).columns
 
-print("1. Converting infinite values to NaN...")
-# We use inplace=True to modify the existing DataFrame without copying it
-X.replace([np.inf, -np.inf], np.nan, inplace=True)
+# 2. Get the safe maximum and minimum for float32
+# This is roughly 3.4 x 10^38 and -3.4 x 10^38
+safe_max = np.finfo(np.float32).max * 0.99  # 99% of max just to be safe
+safe_min = np.finfo(np.float32).min * 0.99
 
-# (Optional but recommended) Verify that no infs remain
-# assert not np.isinf(X.select_dtypes(include=np.number)).any().any(), "Still have infs!"
+print(f"Clipping {len(numeric_cols)} numeric columns to safe float32 limits...")
 
-print("2. Proceeding to XGBoost...")
-# You don't need to impute or fill the NaNs! 
-# XGBoost's DMatrix natively flags NaNs as missing data.
+# 3. Apply the clip to all numeric columns at once
+X[numeric_cols] = X[numeric_cols].clip(lower=safe_min, upper=safe_max)
 
-# Create your DMatrix (using the splits we made in the previous step)
-# The 'missing=np.nan' parameter explicitly tells XGBoost what your missing values look like
-dtrain = xgb.QuantileDMatrix(X_train, label=y_train, missing=np.nan)
-dval = xgb.DMatrix(X_val, label=y_val, missing=np.nan)
-dtest = xgb.DMatrix(X_test, label=y_test, missing=np.nan)
-
-# ... Proceed with training exactly as before!
+# Now it is 100% safe to downcast to float32
+X[numeric_cols] = X[numeric_cols].astype(np.float32)
