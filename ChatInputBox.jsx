@@ -1,66 +1,73 @@
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
 import numpy as np
-import matplotlib.pyplot as plt
+import gc
 
-# ---------------------------------------------------------
-# Step 5: Academic Formatting Setup
-# ---------------------------------------------------------
-# Use a serif font (e.g., Times New Roman) to match IEEE templates
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+# Assuming your data is already loaded into X (features) and y (labels 0-9)
+# TIP: Ensure X is float32 and y is int8 to save ~50% of your RAM!
 
-# ---------------------------------------------------------
-# Step 1: Gather Epoch Data (Mocking the Training Logs)
-# ---------------------------------------------------------
-# X-axis: 100 Training Epochs
-epochs = np.arange(1, 101)
+# --- 1. DATA SPLITTING (70 / 20 / 10) ---
 
-# Y-axis (Baseline): TransformerConv
-# Narrative: Full-rank models suffer from validation volatility and severe gradient variance.
-# Anchor: Reaches ~90.12% F1.
-transformer_f1 = 90.12 - 35 * np.exp(-0.06 * epochs)
-# Add heavy noise and periodic sharp validation drops (spikes) to simulate instability
-noise = np.random.normal(0, 1.2, len(epochs))
-spikes = np.random.choice([0, -4, 3, -7], size=len(epochs), p=[0.85, 0.05, 0.05, 0.05])
-transformer_f1 = transformer_f1 + noise + spikes
+# First split: 70% Train, 30% Temp (which will become Val and Test)
+X_train, X_temp, y_train, y_temp = train_test_split(
+    X, y, 
+    test_size=0.30, 
+    random_state=42, 
+    stratify=y # Ensures all 10 classes are balanced across splits
+)
 
-# Y-axis (Ours): GraphTPA
-# Narrative: Low-rank architecture forces an information bottleneck, drastically stabilizing optimization.
-# Anchor: Reaches a superior global optimum of ~95.77% F1 in fewer epochs.
-graphtpa_f1 = 95.77 - 35 * np.exp(-0.12 * epochs) 
-# Add very minimal, realistic noise for a smooth convergence curve
-graphtpa_f1 += np.random.normal(0, 0.2, len(epochs))
+# Second split: The remaining 30% is split into 2/3 (20% overall) and 1/3 (10% overall)
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp, y_temp, 
+    test_size=(1/3), 
+    random_state=42, 
+    stratify=y_temp
+)
 
-# ---------------------------------------------------------
-# Step 2 & 3 & 4: Configure Axes and Graph the Trajectories
-# ---------------------------------------------------------
-plt.figure(figsize=(9, 6))
+# Free up memory immediately
+del X_temp, y_temp
+gc.collect()
 
-# Plot the volatile full-rank baseline (Dashed line for grayscale contrast)
-plt.plot(epochs, transformer_f1, label='TransformerConv (Full-Rank Baseline)', 
-         color='#e74c3c', linestyle='--', linewidth=1.5, alpha=0.8)
+# --- 2. XGBOOST DATA STRUCTURES ---
 
-# Plot the highly stable GraphTPA proposed model (Solid, thicker line)
-plt.plot(epochs, graphtpa_f1, label='GraphTPA (Low-Rank / Ours)', 
-         color='#2ecc71', linestyle='-', linewidth=2.5)
+# For 16M rows, standard DMatrix is okay, but QuantileDMatrix uses less memory 
+# and initializes faster when using the 'hist' tree method.
+dtrain = xgb.QuantileDMatrix(X_train, label=y_train)
+dval = xgb.DMatrix(X_val, label=y_val)
+dtest = xgb.DMatrix(X_test, label=y_test)
 
-# Axis labels and titles
-plt.title("Training Convergence Dynamics on NF-ToN-IoT", fontsize=16, fontweight='bold', pad=15)
-plt.xlabel("Training Epochs", fontsize=14)
-plt.ylabel("Validation Macro F1-Score (%)", fontsize=14)
+# --- 3. MODEL PARAMETERS ---
 
-# Set logical limits for the Y-axis to clearly show the gap
-plt.ylim(50, 100)
-plt.xlim(0, 100)
+params = {
+    'objective': 'multi:softprob', # Outputs probabilities for each of the 10 classes
+    'num_class': 10,               # Since your labels are 0-9
+    'tree_method': 'hist',         # CRITICAL for 16M rows. Do not use 'exact'.
+    'device': 'cuda',              # Change to 'cpu' if you don't have a GPU
+    'eval_metric': 'mlogloss',     # Multiclass logloss for evaluation
+    'learning_rate': 0.1,
+    'max_depth': 6
+}
 
-# ---------------------------------------------------------
-# Step 5: Final Polish and Export
-# ---------------------------------------------------------
-# Formatting grid and legend for readability
-plt.grid(True, which="both", ls="--", alpha=0.5)
-plt.legend(loc='lower right', fontsize=12, frameon=True, shadow=True)
+# --- 4. TRAINING WITH EARLY STOPPING ---
 
-# Export as a high-resolution vector graphic for LaTeX compilation
-plt.tight_layout()
-plt.savefig("fig_convergence.pdf", format="pdf", dpi=300, bbox_inches='tight')
-print("Plot successfully saved as 'fig_convergence.pdf'")
-plt.show()
+evals = [(dtrain, 'train'), (dval, 'validation')]
+
+print("Starting training...")
+model = xgb.train(
+    params=params,
+    dtrain=dtrain,
+    num_boost_round=2000,          # High number, rely on early stopping
+    evals=evals,
+    early_stopping_rounds=50,      # Stop if validation score doesn't improve for 50 rounds
+    verbose_eval=25                # Print progress every 25 trees
+)
+
+# --- 5. EVALUATION ---
+
+# Predict on the unseen 10% test set
+preds_proba = model.predict(dtest)
+
+# Convert probabilities to definitive class labels (0-9)
+preds_labels = np.argmax(preds_proba, axis=1)
+
+print("Finished!")
