@@ -1,20 +1,18 @@
-from faster_whisper import WhisperModel
+# Create environment with Python 3.10 (most stable for lambeq)
+conda create -n qnlp python=3.10 -y
 
-# Define the path to the folder you just downloaded
-model_path = "./my-local-whisper-model"
+# Activate it
+conda activate qnlp
 
-# Load the model from the local path
-# Note: "model_size_or_path" accepts either a size ("tiny", "large-v3") OR a local directory path.
-model = WhisperModel(
-    model_size_or_path=model_path, 
-    device="cuda", # or "cpu"
-    compute_type="float16" # or "int8"
-)
+# Install core quantum and NLP libraries
+pip install pennylane pennylane-lightning lambeq discopy
+pip install sentence-transformers torch torchvision
+pip install scikit-learn matplotlib seaborn pandas jupyter tqdm
 
-# Run a transcription just like normal
-segments, info = model.transcribe("audio.mp3", beam_size=5)
+# Install analysis and tracking tools
+pip install cca-zoo wandb pytest hydra-core
 
-print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
-
-for segment in segments:
-    print("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+# Verify the key import works
+python -c "import lambeq; print('lambeq version:', lambeq.__version__)"
+python -c "import pennylane as qml; print('PennyLane version:', qml.__version__)"
+python -c "from sentence_transformers import SentenceTransformer; print('SBERT OK')"
