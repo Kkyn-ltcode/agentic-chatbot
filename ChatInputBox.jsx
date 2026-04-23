@@ -1,26 +1,32 @@
 BLIMP_TASKS = {
-    "relative_clause": {
-        "hf_name": "relative_clause",
-        "description": "Subject and object relative clauses",
-        "relevance": "Core phenomenon — directly tests relative clause syntax",
+    "distractor_agreement_relative_clause": {
+        "hf_name": "distractor_agreement_relative_clause",
+        "description": "Subject-verb agreement across relative clause",
+        "relevance": "Core phenomenon — tests relative clause syntax directly",
         "priority": 1,
     },
-    "filler_gap_dependency": {
-        "hf_name": "filler_gap_dependency",
-        "description": "Long-distance filler-gap dependencies",
-        "relevance": "Tests wh-movement and long-distance dependencies",
+    "anaphor_number_agreement": {
+        "hf_name": "anaphor_number_agreement",
+        "description": "Reflexive pronoun number agreement",
+        "relevance": "Pure syntactic agreement — zero semantic content",
         "priority": 2,
     },
-    "anaphor_agreement": {
-        "hf_name": "anaphor_agreement",
-        "description": "Reflexive pronoun agreement",
-        "relevance": "Pure syntactic agreement — zero semantic content",
+    "anaphor_gender_agreement": {
+        "hf_name": "anaphor_gender_agreement",
+        "description": "Reflexive pronoun gender agreement",
+        "relevance": "Pure syntactic agreement — complements number agreement",
         "priority": 3,
     },
-    "wh_questions_object_gap": {
-        "hf_name": "wh_questions_object_gap",
-        "description": "Wh-questions with object gap",
-        "relevance": "Complements filler_gap, different gap position",
+    "passive_1": {
+        "hf_name": "passive_1",
+        "description": "Passive voice constructions",
+        "relevance": "Active/passive alternation — directly relevant to our training pairs",
         "priority": 4,
+    },
+    "principle_A_c_command": {
+        "hf_name": "principle_A_c_command",
+        "description": "Binding Principle A — c-command domain",
+        "relevance": "Long-distance syntactic dependency, structural constraint",
+        "priority": 5,
     },
 }
