@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIDS Research Agenda — Graph ML Paper Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #050810;
+    --surface: #0c1220;
+    --surface2: #111827;
+    --border: #1e2d45;
+    --accent1: #00f5c4;
+    --accent2: #3b82f6;
+    --accent3: #f59e0b;
+    --accent4: #ef4444;
+    --accent5: #a855f7;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --highlight: #ffffff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,245,196,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,245,196,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 40px 32px;
+  }
+
+  /* Header */
+  header {
+    margin-bottom: 60px;
+    border-left: 3px solid var(--accent1);
+    padding-left: 24px;
+  }
+
+  .header-tag {
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--accent1);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(28px, 4vw, 52px);
+    font-weight: 800;
+    color: var(--highlight);
+    line-height: 1.1;
+    margin-bottom: 16px;
+  }
+
+  h1 span { color: var(--accent1); }
+
+  .header-sub {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+    max-width: 700px;
+  }
+
+  .stats-bar {
+    display: flex;
+    gap: 32px;
+    margin-top: 28px;
+    flex-wrap: wrap;
+  }
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat-num {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent1);
+  }
+
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  /* Section titles */
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 11px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Priority filter */
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 40px;
+    flex-wrap: wrap;
+  }
+
+  .filter-btn {
+    padding: 6px 16px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .filter-btn:hover, .filter-btn.active {
+    border-color: var(--accent1);
+    color: var(--accent1);
+    background: rgba(0,245,196,0.05);
+  }
+
+  /* Papers grid */
+  .papers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 20px;
+    margin-bottom: 60px;
+  }
+
+  .paper-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 28px;
+    position: relative;
+    transition: all 0.3s;
+    cursor: pointer;
+    overflow: hidden;
+  }
+
+  .paper-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 2px;
+    background: var(--card-accent, var(--accent1));
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s;
+  }
+
+  .paper-card:hover::before { transform: scaleX(1); }
+
+  .paper-card:hover {
+    border-color: var(--card-accent, var(--accent1));
+    background: var(--surface2);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 12px;
+  }
+
+  .paper-id {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--card-accent, var(--accent1));
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .badge {
+    font-size: 9px;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border: 1px solid;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .badge-venue { border-color: var(--accent2); color: var(--accent2); }
+  .badge-priority-high { border-color: var(--accent1); color: var(--accent1); }
+  .badge-priority-mid { border-color: var(--accent3); color: var(--accent3); }
+  .badge-priority-ext { border-color: var(--accent5); color: var(--accent5); }
+  .badge-novel { border-color: var(--accent4); color: var(--accent4); }
+
+  .paper-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--highlight);
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+
+  .paper-tagline {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-bottom: 16px;
+  }
+
+  .methods-section {
+    margin-bottom: 16px;
+  }
+
+  .methods-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .methods-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .method-tag {
+    font-size: 9px;
+    padding: 3px 8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--text);
+    letter-spacing: 0.5px;
+  }
+
+  .paper-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .meta-label {
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .meta-value {
+    font-size: 11px;
+    color: var(--text);
+  }
+
+  .expand-section {
+    display: none;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .paper-card.expanded .expand-section { display: block; }
+
+  .expand-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .contribution-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .contribution-list li {
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.6;
+    padding-left: 16px;
+    position: relative;
+  }
+
+  .contribution-list li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--card-accent, var(--accent1));
+  }
+
+  .expand-btn {
+    margin-top: 12px;
+    font-size: 10px;
+    color: var(--card-accent, var(--accent1));
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: 'Space Mono', monospace;
+    letter-spacing: 1px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    text-transform: uppercase;
+  }
+
+  /* Roadmap timeline */
+  .timeline {
+    position: relative;
+    padding-left: 40px;
+    margin-bottom: 60px;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 0; bottom: 0;
+    width: 1px;
+    background: linear-gradient(to bottom, var(--accent1), var(--accent2), var(--accent5));
+  }
+
+  .timeline-phase {
+    position: relative;
+    margin-bottom: 40px;
+  }
+
+  .timeline-dot {
+    position: absolute;
+    left: -34px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent1);
+    border: 2px solid var(--bg);
+  }
+
+  .phase-label {
+    font-size: 9px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent1);
+    margin-bottom: 6px;
+  }
+
+  .phase-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--highlight);
+    margin-bottom: 6px;
+  }
+
+  .phase-papers {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* Method matrix */
+  .matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 60px;
+  }
+
+  .matrix-table th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--surface);
+    color: var(--muted);
+    font-weight: 400;
+    letter-spacing: 2px;
+    font-size: 9px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .matrix-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(30,45,69,0.5);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+
+  .matrix-table tr:hover td {
+    background: var(--surface);
+  }
+
+  .dot-yes { color: var(--accent1); }
+  .dot-partial { color: var(--accent3); }
+  .dot-no { color: var(--border); }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .footer-text {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .footer-tag {
+    font-size: 10px;
+    color: var(--accent1);
+    letter-spacing: 2px;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .papers-grid { grid-template-columns: 1fr; }
+    .container { padding: 24px 16px; }
+  }
+
+  /* Animations */
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .paper-card {
+    animation: fadeInUp 0.4s ease both;
+  }
+
+  .paper-card:nth-child(1) { animation-delay: 0.05s; }
+  .paper-card:nth-child(2) { animation-delay: 0.10s; }
+  .paper-card:nth-child(3) { animation-delay: 0.15s; }
+  .paper-card:nth-child(4) { animation-delay: 0.20s; }
+  .paper-card:nth-child(5) { animation-delay: 0.25s; }
+  .paper-card:nth-child(6) { animation-delay: 0.30s; }
+  .paper-card:nth-child(7) { animation-delay: 0.35s; }
+  .paper-card:nth-child(8) { animation-delay: 0.40s; }
+  .paper-card:nth-child(9) { animation-delay: 0.45s; }
+  .paper-card:nth-child(10) { animation-delay: 0.50s; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <div class="header-tag">// Graph-ML × NIDS — Research Agenda 2025–2027</div>
+    <h1>Your Paper<br><span>Pipeline</span></h1>
+    <p class="header-sub">A full research agenda derived from your three surveys (Graph-Based AI Frontier, Finance Graph ML, General Graph ML) mapped to Network Intrusion Detection Systems. Each card is a distinct, publishable paper with clear novelty.</p>
+    <div class="stats-bar">
+      <div class="stat"><div class="stat-num">10</div><div class="stat-label">Paper Ideas</div></div>
+      <div class="stat"><div class="stat-num">14</div><div class="stat-label">Methods Mapped</div></div>
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">Traffic Domains</div></div>
+      <div class="stat"><div class="stat-num">5</div><div class="stat-label">Target Venues</div></div>
+    </div>
+  </header>
+
+  <!-- Filter -->
+  <div class="section-title">Filter by priority</div>
+  <div class="filter-bar">
+    <button class="filter-btn active" onclick="filterCards('all', this)">All Papers</button>
+    <button class="filter-btn" onclick="filterCards('high', this)">★ High Priority</button>
+    <button class="filter-btn" onclick="filterCards('mid', this)">Mid Priority</button>
+    <button class="filter-btn" onclick="filterCards('ext', this)">Extended Work</button>
+    <button class="filter-btn" onclick="filterCards('SP', this)">IEEE S&amp;P / CCS</button>
+    <button class="filter-btn" onclick="filterCards('NeurIPS', this)">NeurIPS / ICML</button>
+    <button class="filter-btn" onclick="filterCards('journal', this)">Journal</button>
+  </div>
+
+  <!-- Papers Grid -->
+  <div class="section-title">Research papers</div>
+  <div class="papers-grid" id="papersGrid">
+
+    <!-- Paper 1 -->
+    <div class="paper-card" style="--card-accent: #00f5c4" data-priority="high" data-venue="SP">
+      <div class="card-header">
+        <div class="paper-id">PAPER 01</div>
+        <div class="badges">
+          <span class="badge badge-priority-high">★ High Priority</span>
+          <span class="badge badge-venue">IEEE S&P / CCS</span>
+          <span class="badge badge-novel">Novel Arch</span>
+        </div>
+      </div>
+      <div class="paper-title">HyperMamba-NIDS: Continuous-Time Heterogeneous Hypergraph Mamba for Multi-Vector Intrusion Detection</div>
+      <div class="paper-tagline">Your flagship paper. Fuses Graph-Mamba's linear-time SSM with hyperedge modeling to detect coordinated attacks (botnets, DDoS) that pairwise GNNs structurally cannot capture.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">GraMO / SAMBA</span>
+          <span class="method-tag">k-HNN Hypergraph</span>
+          <span class="method-tag">FactorGCL residual</span>
+          <span class="method-tag">CTDG formulation</span>
+          <span class="method-tag">Hyper-GCN</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">CICIDS, IoT-23, UNSW-NB15</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">First Hyper-Mamba for security</div></div>
+        <div class="meta-item"><div class="meta-label">Complexity</div><div class="meta-value">O(N) temporal + O(E·k) spatial</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Standard + IoT</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>First architecture to model coordinated multi-host attacks as hyperedges in a continuous-time dynamic graph</li>
+          <li>Bidirectional selective SSM encoder replaces quadratic Temporal Graph Transformer — O(N) scaling</li>
+          <li>Hyperedge-centric random walk tokenizer to serialize hypergraphs into Mamba-compatible sequences</li>
+          <li>Evaluated on standard, enterprise, and IoT benchmarks — broadest coverage in NIDS GNN literature</li>
+          <li>Directly addresses Gap 3 from your Graph ML survey (SSM + Hypergraph unification)</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 2 -->
+    <div class="paper-card" style="--card-accent: #3b82f6" data-priority="high" data-venue="SP">
+      <div class="card-header">
+        <div class="paper-id">PAPER 02</div>
+        <div class="badges">
+          <span class="badge badge-priority-high">★ High Priority</span>
+          <span class="badge badge-venue">IEEE S&P / CCS</span>
+        </div>
+      </div>
+      <div class="paper-title">FedGraph-NIDS: Federated Contrastive Learning on Continuous-Time Traffic Graphs for Privacy-Preserving Enterprise Detection</div>
+      <div class="paper-tagline">Addresses the critical enterprise gap: organizations can't share raw traffic logs. Adapts FC2L and GCPAL from financial AML to cross-organizational NIDS without violating data privacy regulations.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">FC2L Federated Contrastive</span>
+          <span class="method-tag">CLDG / GCPAL</span>
+          <span class="method-tag">CTDG formulation</span>
+          <span class="method-tag">Temporal translation invariance</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">Enterprise traffic (multi-org sim)</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">First federated CTDG for NIDS</div></div>
+        <div class="meta-item"><div class="meta-label">Angle</div><div class="meta-value">Privacy + Compliance (GDPR)</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Enterprise</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>ACOP-style orthogonal projection preserving past detection tasks while adapting to new attack patterns</li>
+          <li>Temporal translation invariance contrastive loss for label-scarce intrusion data</li>
+          <li>Cross-organizational subgraph training without raw packet/flow exchange</li>
+          <li>Strong regulatory framing (GDPR, EU AI Act) — makes paper immediately deployable argument</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 3 -->
+    <div class="paper-card" style="--card-accent: #f59e0b" data-priority="high" data-venue="NeurIPS">
+      <div class="card-header">
+        <div class="paper-id">PAPER 03</div>
+        <div class="badges">
+          <span class="badge badge-priority-high">★ High Priority</span>
+          <span class="badge badge-venue">NeurIPS / ICML</span>
+          <span class="badge badge-novel">Novel Arch</span>
+        </div>
+      </div>
+      <div class="paper-title">SheafNIDS: Bayesian Sheaf Neural Networks for Heterophilic Network Anomaly Detection with Uncertainty Quantification</div>
+      <div class="paper-tagline">Network traffic is deeply heterophilic — benign and malicious flows share the same hosts. BSNN's orthogonal restriction maps and Bayesian UQ are perfectly suited; no prior NIDS paper has used sheaf theory.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">Bayesian Sheaf NN (BSNN)</span>
+          <span class="method-tag">Cayley distributions SO(n)</span>
+          <span class="method-tag">Variational inference (ELBO)</span>
+          <span class="method-tag">Sheaf Laplacian</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">NSL-KDD, UNSW-NB15, CIC-IDS</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">First sheaf-based NIDS model</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">Uncertainty scores per alert</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Standard + Enterprise</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Model NIDS as a heterophilic graph classification problem — attack nodes connect to benign neighbors</li>
+          <li>Sheaf Laplacian restriction maps allow per-edge geometric rotation, preserving distinct node identities</li>
+          <li>Bayesian posterior over sheaf structure gives calibrated confidence per detection — critical for SOC analysts</li>
+          <li>Robustness to adversarial evasion (noisy/perturbed features) via Bayesian priors</li>
+          <li>Addresses Gap 1 from Graph ML survey — extend to stochastic base graph for fully uncertain topologies</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 4 -->
+    <div class="paper-card" style="--card-accent: #a855f7" data-priority="high" data-venue="SP">
+      <div class="card-header">
+        <div class="paper-id">PAPER 04</div>
+        <div class="badges">
+          <span class="badge badge-priority-high">★ High Priority</span>
+          <span class="badge badge-venue">IEEE S&P / CCS</span>
+        </div>
+      </div>
+      <div class="paper-title">AttackRAG: Knowledge Graph-Grounded LLM Reasoning for Explainable Intrusion Alert Generation</div>
+      <div class="paper-tagline">Combines PolyG's adaptive GraphRAG with MITRE ATT&CK and CVE knowledge graphs to generate verifiable, multi-hop attack chain explanations — eliminating hallucinated threat reports.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">PolyG Adaptive GraphRAG</span>
+          <span class="method-tag">StructRAG DPO router</span>
+          <span class="method-tag">KAG symbolic constraints</span>
+          <span class="method-tag">Youtu-GraphRAG IRCoT</span>
+          <span class="method-tag">KGGen entity extraction</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">MITRE ATT&CK + CICIDS</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">Hallucination-free NIDS alerts</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">90% fewer tokens vs CoT-RAG</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Enterprise + Standard</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Build Network Security Knowledge Graph from MITRE ATT&CK, CVE, and NVD databases using KGGen</li>
+          <li>PolyG taxonomy adapted to security: query types → (host-centric, technique-centric, campaign-centric, fact-check)</li>
+          <li>LLM generates CYPHER queries over Neo4j security KG — grounded multi-hop attack chain reasoning</li>
+          <li>StructRAG-style dynamic structure router selects optimal format (attack graph, kill-chain table, timeline)</li>
+          <li>Evaluates hallucination rate vs CoT and vanilla RAG on security QA benchmarks</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 5 -->
+    <div class="paper-card" style="--card-accent: #ef4444" data-priority="mid" data-venue="NeurIPS">
+      <div class="card-header">
+        <div class="paper-id">PAPER 05</div>
+        <div class="badges">
+          <span class="badge badge-priority-mid">Mid Priority</span>
+          <span class="badge badge-venue">NeurIPS / ICLR</span>
+          <span class="badge badge-novel">Novel Arch</span>
+        </div>
+      </div>
+      <div class="paper-title">MotifIDS: Beyond Message Passing — Attack Signature Detection via Neural Graph Pattern Machines</div>
+      <div class="paper-tagline">Attack signatures are topological motifs (port scan patterns, C2 beaconing, lateral movement triads). GPM's motif tokenizer directly encodes these without message passing, eliminating over-smoothing on traffic graphs.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">Neural GPM (ICML 2025)</span>
+          <span class="method-tag">Random walk tokenizer</span>
+          <span class="method-tag">Cross-attention motif ID</span>
+          <span class="method-tag">GRU/LSTM pattern encoder</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">CICIDS, NSL-KDD</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">Attack = motif vocabulary</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">Interpretable attention weights</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Standard</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Define a "Network Attack Motif Vocabulary" — encode known attack patterns as canonical subgraph tokens</li>
+          <li>Differentiable adaptive tokenizer (Gap 2 from Graph ML survey) using RL agent for rare-motif mining</li>
+          <li>Cross-attention weights directly interpretable as "which traffic pattern triggered this alert"</li>
+          <li>Strong OOD generalization — novel attack variants share motif substructures with known attacks</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 6 -->
+    <div class="paper-card" style="--card-accent: #00f5c4" data-priority="mid" data-venue="NeurIPS">
+      <div class="card-header">
+        <div class="paper-id">PAPER 06</div>
+        <div class="badges">
+          <span class="badge badge-priority-mid">Mid Priority</span>
+          <span class="badge badge-venue">ICML / NeurIPS</span>
+        </div>
+      </div>
+      <div class="paper-title">TopoNIDS: Topological Deep Learning for Detecting Network Topology Reconfiguration Under Attack</div>
+      <div class="paper-tagline">Applies persistent homology and Ordered TDL to track how the "shape" of a network topology changes during an attack — worms and ransomware reorganize network structure before payloads deploy.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">Topological Deep Learning</span>
+          <span class="method-tag">Ordered TDL (2025)</span>
+          <span class="method-tag">Persistent Homology</span>
+          <span class="method-tag">Betti numbers β0/β1/β2</span>
+          <span class="method-tag">TopoBench framework</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">CICIDS, IoT-23</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">Attack = topological event</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">Early detection before payload</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Standard + IoT</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>First use of persistent homology filtration on network traffic graphs for pre-attack detection</li>
+          <li>Betti number time series as early-warning signal — topology changes before traffic volume anomalies</li>
+          <li>Ordered TDL maps directional contagion: how attack propagates directionally hop-by-hop</li>
+          <li>Evaluated on worm propagation and ransomware lateral movement scenarios</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 7 -->
+    <div class="paper-card" style="--card-accent: #3b82f6" data-priority="mid" data-venue="journal">
+      <div class="card-header">
+        <div class="paper-id">PAPER 07</div>
+        <div class="badges">
+          <span class="badge badge-priority-mid">Mid Priority</span>
+          <span class="badge badge-venue">TIFS / TDSC</span>
+        </div>
+      </div>
+      <div class="paper-title">IrregularFlow-NIDS: Hypergraph Neural Networks for Asynchronous IoT Traffic Intrusion Detection</div>
+      <div class="paper-tagline">IoT devices produce deeply asynchronous, irregular traffic. HyperIMTS's irregularity-aware message passing eliminates artificial padding, preserving real attack timing signatures in constrained IoT environments.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">HyperIMTS (ICML 2025)</span>
+          <span class="method-tag">Irregularity-aware msg passing</span>
+          <span class="method-tag">Temporal + variable hyperedges</span>
+          <span class="method-tag">Hyper-GCN adaptive topology</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">IoT-23, N-BaIoT, MQTTset</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">No padding — raw IoT timing</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">Resource-efficient inference</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">IoT / Edge</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Map each IoT packet event to a node — temporal hyperedges encode device timing, variable hyperedges encode device clusters</li>
+          <li>Irregularity-aware message passing natively handles Mirai-style bursty botnet coordination</li>
+          <li>No padding means no timing signal destruction — attack timing patterns preserved</li>
+          <li>Lightweight enough for edge deployment on resource-constrained IoT gateways</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 8 -->
+    <div class="paper-card" style="--card-accent: #f59e0b" data-priority="mid" data-venue="journal">
+      <div class="card-header">
+        <div class="paper-id">PAPER 08</div>
+        <div class="badges">
+          <span class="badge badge-priority-mid">Mid Priority</span>
+          <span class="badge badge-venue">TNNLS / TDSC</span>
+        </div>
+      </div>
+      <div class="paper-title">ImbalanceNIDS: Contrastive Pre-training on Dynamic Traffic Graphs for Extreme Class Imbalance</div>
+      <div class="paper-tagline">NIDS datasets suffer from extreme imbalance (attack traffic &lt;0.1% in real networks). Adapts CRP-AML's contextual risk profiling and GCPAL's contrastive pre-training to maintain F1&gt;80% on minority attack classes.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">CRP-AML framework</span>
+          <span class="method-tag">GCPAL contrastive pretraining</span>
+          <span class="method-tag">CLDG temporal invariance</span>
+          <span class="method-tag">FC2L ACOP mechanism</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">CICIDS, real enterprise logs</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">Security-context risk profiling</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">Robust at 0.001% attack ratio</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">Standard + Enterprise</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Embed NIDS "red flags" (MITRE techniques, CVE patterns) directly into graph learning pipeline as contextual priors</li>
+          <li>Temporal contrastive objective: same host's normal behavior should be invariant across time windows</li>
+          <li>Deviations from baseline profile weighted as contextual risk, not just statistical anomaly</li>
+          <li>Demonstrate F1 maintenance at 0.0005 attack ratio — matching CRP-AML's AML results</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 9 -->
+    <div class="paper-card" style="--card-accent: #a855f7" data-priority="ext" data-venue="NeurIPS">
+      <div class="card-header">
+        <div class="paper-id">PAPER 09</div>
+        <div class="badges">
+          <span class="badge badge-priority-ext">Extended Work</span>
+          <span class="badge badge-venue">NeurIPS / ICLR</span>
+          <span class="badge badge-novel">Survey Gap</span>
+        </div>
+      </div>
+      <div class="paper-title">DeltaFlow: Gated DeltaNet Linear Attention for Streaming Packet-Level Intrusion Detection</div>
+      <div class="paper-tagline">Replaces softmax attention in Temporal Graph Transformers with Gated DeltaNet's targeted memory update — eliminating KV cache explosion for real-time high-speed packet stream analysis.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">Gated DeltaNet (ICLR 2025/26)</span>
+          <span class="method-tag">Higher-Order Linear Attention</span>
+          <span class="method-tag">Delta update rule</span>
+          <span class="method-tag">GraMO spatiotemporal</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">CAIDA, PCAP-level datasets</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">Streaming packet analysis O(1) memory</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">100Gbps line-rate capable</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">All (backbone/ISP level)</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Gated DeltaNet's targeted write replaces full KV cache — O(1) memory regardless of sequence length</li>
+          <li>Selective forgetting of benign traffic, selective retention of anomalous flow sequences</li>
+          <li>Real-time streaming inference — no window buffering, processes packets as they arrive</li>
+          <li>Designed for high-speed backbone traffic (100Gbps+) where no existing GNN operates</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Paper 10 -->
+    <div class="paper-card" style="--card-accent: #ef4444" data-priority="ext" data-venue="journal">
+      <div class="card-header">
+        <div class="paper-id">PAPER 10</div>
+        <div class="badges">
+          <span class="badge badge-priority-ext">Extended Work</span>
+          <span class="badge badge-venue">TIFS / Survey</span>
+        </div>
+      </div>
+      <div class="paper-title">GraphNIDS-Bench: A Unified Benchmark for Graph-Based Network Intrusion Detection Systems</div>
+      <div class="paper-tagline">The field lacks a standardized evaluation framework like LOB-Bench or TopoBench. This paper creates one — enabling fair comparison across all graph-based NIDS architectures with unified metrics and datasets.</div>
+      <div class="methods-section">
+        <div class="methods-label">Methods from your surveys</div>
+        <div class="methods-list">
+          <span class="method-tag">LOB-Bench methodology</span>
+          <span class="method-tag">TopoBench framework</span>
+          <span class="method-tag">MINE benchmark design</span>
+          <span class="method-tag">KL divergence eval</span>
+        </div>
+      </div>
+      <div class="paper-meta">
+        <div class="meta-item"><div class="meta-label">Target Dataset</div><div class="meta-value">All: CICIDS, NSL-KDD, IoT-23, enterprise</div></div>
+        <div class="meta-item"><div class="meta-label">Core Novelty</div><div class="meta-value">First unified NIDS graph benchmark</div></div>
+        <div class="meta-item"><div class="meta-label">Key Strength</div><div class="meta-value">High citation potential</div></div>
+        <div class="meta-item"><div class="meta-label">Traffic Type</div><div class="meta-value">All three domains</div></div>
+      </div>
+      <button class="expand-btn" onclick="toggleExpand(this)">↓ View contributions</button>
+      <div class="expand-section">
+        <div class="expand-label">Key contributions</div>
+        <ul class="contribution-list">
+          <li>Standardized graph construction pipeline across CICIDS, NSL-KDD, UNSW-NB15, IoT-23, enterprise logs</li>
+          <li>Unified metrics: F1, AUROC, PRAUC, detection latency, memory footprint, OOD generalization</li>
+          <li>Re-evaluate 15+ existing NIDS GNN papers under fair, controlled conditions</li>
+          <li>Release open-source benchmark suite — community resource with high long-term citation value</li>
+          <li>Includes adversarial robustness track: how each model performs under evasion attacks</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Publication Roadmap -->
+  <div class="section-title">Suggested publication roadmap</div>
+  <div class="timeline">
+    <div class="timeline-phase">
+      <div class="timeline-dot"></div>
+      <div class="phase-label">Phase 1 — Months 1–8</div>
+      <div class="phase-title">Establish Your Core Contribution</div>
+      <div class="phase-papers">Start with Paper 01 (HyperMamba-NIDS) as your flagship. This directly addresses a documented gap in both your Finance and Graph ML surveys, targets IEEE S&P / CCS, and establishes you as the person who unified SSMs with hypergraphs for security. Simultaneously develop Paper 10 (GraphNIDS-Bench) — it supports all your future papers and builds community impact early.</div>
+    </div>
+    <div class="timeline-phase">
+      <div class="timeline-dot" style="background: #3b82f6"></div>
+      <div class="phase-label">Phase 2 — Months 6–14</div>
+      <div class="phase-title">Expand Across Attack Surfaces</div>
+      <div class="phase-papers">Submit Paper 02 (FedGraph-NIDS) targeting enterprise/privacy angle for CCS. Submit Paper 04 (AttackRAG) targeting explainability and LLM+security intersection for IEEE S&P. Both papers reuse infrastructure from Paper 01 — shared codebase, shared datasets.</div>
+    </div>
+    <div class="timeline-phase">
+      <div class="timeline-dot" style="background: #f59e0b"></div>
+      <div class="phase-label">Phase 3 — Months 12–20</div>
+      <div class="phase-title">Specialized Domain Papers</div>
+      <div class="phase-papers">Papers 03, 05, 06, 07 target NeurIPS/ICML with more theoretical contributions (sheaf theory, motif recognition, topology, IoT). Each explores a distinct methodological angle from your surveys. Papers 07 and 08 can be journal submissions for consistent output cadence.</div>
+    </div>
+    <div class="timeline-phase">
+      <div class="timeline-dot" style="background: #a855f7"></div>
+      <div class="phase-label">Phase 4 — Months 18–26</div>
+      <div class="phase-title">Extended & Synthesis Work</div>
+      <div class="phase-papers">Papers 08, 09, and a potential survey/position paper synthesizing the entire agenda. Paper 09 (DeltaFlow) requires PCAP-level datasets and high-speed testbed — plan infrastructure early. A comprehensive survey paper citing all your prior work consolidates your position as a leading researcher in this space.</div>
+    </div>
+  </div>
+
+  <!-- Method Coverage Matrix -->
+  <div class="section-title">Method × paper coverage matrix</div>
+  <table class="matrix-table">
+    <thead>
+      <tr>
+        <th>Method / Framework</th>
+        <th>Source Survey</th>
+        <th>P01</th><th>P02</th><th>P03</th><th>P04</th><th>P05</th>
+        <th>P06</th><th>P07</th><th>P08</th><th>P09</th><th>P10</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>GraMO / SAMBA (Graph-Mamba)</td><td>Finance + Graph ML</td>
+        <td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td><td class="dot-partial">◑</td></tr>
+      <tr><td>k-HNN Hypergraph (k-GWL)</td><td>Graph ML</td>
+        <td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td></tr>
+      <tr><td>FC2L / Federated Contrastive</td><td>Finance</td>
+        <td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td><td class="dot-no">○</td><td class="dot-no">○</td></tr>
+      <tr><td>Bayesian Sheaf NN (BSNN)</td><td>Graph ML</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td></tr>
+      <tr><td>PolyG / GraphRAG / StructRAG</td><td>Finance + Graph ML + AI</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td></tr>
+      <tr><td>Neural Graph Pattern Machine (GPM)</td><td>Graph ML</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td></tr>
+      <tr><td>Topological DL / Ordered TDL</td><td>Finance + AI</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td></tr>
+      <tr><td>HyperIMTS (Irregular TS)</td><td>Finance</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td></tr>
+      <tr><td>CRP-AML / GCPAL / CLDG</td><td>Finance</td>
+        <td class="dot-no">○</td><td class="dot-partial">◑</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td></tr>
+      <tr><td>Gated DeltaNet / HLA</td><td>AI (Graph-Based)</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-partial">◑</td></tr>
+      <tr><td>Hyper-GCN / Adaptive Topology</td><td>AI (Graph-Based)</td>
+        <td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-partial">◑</td></tr>
+      <tr><td>GraphPINE / GPS-DTI (Interpretable GNN)</td><td>AI (Graph-Based)</td>
+        <td class="dot-partial">◑</td><td class="dot-no">○</td><td class="dot-partial">◑</td><td class="dot-no">○</td><td class="dot-partial">◑</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td></tr>
+      <tr><td>KGGen / RAG4GFM / KAG</td><td>Finance + AI</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td></tr>
+      <tr><td>LOB-Bench / TopoBench (Eval)</td><td>Finance + Graph ML</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td>
+        <td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-no">○</td><td class="dot-yes">●</td></tr>
+    </tbody>
+  </table>
+
+  <footer>
+    <div class="footer-text">● Primary method &nbsp;◑ Partial / supporting &nbsp;○ Not used</div>
+    <div class="footer-tag">// 10 papers · 14 methods · 3 traffic domains</div>
+  </footer>
+
+</div>
+
+<script>
+  function filterCards(type, btn) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    const cards = document.querySelectorAll('.paper-card');
+    cards.forEach(card => {
+      if (type === 'all') {
+        card.classList.remove('hidden');
+      } else if (type === 'high' || type === 'mid' || type === 'ext') {
+        card.classList.toggle('hidden', card.dataset.priority !== type);
+      } else {
+        card.classList.toggle('hidden', card.dataset.venue !== type);
+      }
+    });
+  }
+
+  function toggleExpand(btn) {
+    const card = btn.closest('.paper-card');
+    const isExpanded = card.classList.toggle('expanded');
+    btn.textContent = isExpanded ? '↑ Hide contributions' : '↓ View contributions';
+  }
+</script>
+</body>
+</html>
