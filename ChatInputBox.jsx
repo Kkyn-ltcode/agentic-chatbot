@@ -1,19 +1,8 @@
-import wandb
-
-# Initialize your wandb run
-run = wandb.init(project="my-awesome-project")
-
-# 1. Create a new artifact
-# type can be 'model', 'dataset', or any custom string you want
-my_artifact = wandb.Artifact(name="my-trained-model", type="model")
-
-# 2. Add a specific file to the artifact
-my_artifact.add_file("model_weights.pth")
-
-# 3. Alternatively, you can add an entire directory
-# my_artifact.add_dir("path/to/dataset/folder")
-
-# 4. Log the artifact to upload it
-run.log_artifact(my_artifact)
-
-wandb.finish()
+# Debug: print all buffer/tensor devices in memory module
+print("=== Memory internal state devices ===")
+for name, buf in memory.named_buffers():
+    print(f"  buffer {name}: {buf.device}")
+for name, param in memory.named_parameters():
+    print(f"  param  {name}: {param.device}")
+print(f"  src_cpu: {src_cpu.device}")
+print(f"  pos_dst_cpu: {pos_dst_cpu.device}")
