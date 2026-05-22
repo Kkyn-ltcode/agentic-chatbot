@@ -1,22 +1,15 @@
-memory = memory.to(cpu)
-memory.reset_state()
+# 1. Re-extract features (will pick up object-aware features)
+#    Delete old global_stats.npz and thyne_shard*.npz first
+rm data/processed/darpa_tc_e3/theia/features/global_stats.npz
+rm data/processed/darpa_tc_e3/theia/features/thyne_shard*.npz
+python -m src.pipeline.batch_features --dataset theia
 
-# Force ALL internal plain tensors to CPU (TGN stores these outside nn.Module buffer system)
-for attr in ['memory', 'last_update', '_assoc']:
-    if hasattr(memory, attr):
-        val = getattr(memory, attr)
-        if isinstance(val, torch.Tensor):
-            setattr(memory, attr, val.to(cpu))
-        elif hasattr(val, 'data'):  # nn.Parameter-like
-            val.data = val.data.to(cpu)
+# 2. Re-normalize
+python -m src.pipeline.normalize --dataset theia
 
-# Update memory & neighbor loader (CPU)
-memory.update_state(src_cpu, pos_dst_cpu, t_cpu, msg_cpu)
-neighbor_loader.insert(src_cpu, pos_dst_cpu)
+# 3. Re-run L1 relabel (if not already done)
+python -m src.pipeline.novel_binary_relabel --dataset theia
 
-# Re-anchor memory internals to CPU after update (guards against TGN internal device drift)
-for attr in ['memory', 'last_update', '_assoc']:
-    if hasattr(memory, attr):
-        val = getattr(memory, attr)
-        if isinstance(val, torch.Tensor):
-            setattr(memory, attr, val.to(cpu))
+# 4. Train with new improvements
+torchrun --nproc_per_node=4 -m src.pipeline.train --config configs/theia_l1_thyn.yaml --dataset theia
+torchrun --nproc_per_node=4 -m src.pipeline.train --config configs/theia_l1_baseline_a.yaml --dataset theia
