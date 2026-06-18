@@ -86,3 +86,14 @@ Now your `pg_restore` command will work perfectly! Try running it again:
 ```bash
 pg_restore -U postgres -d postgres -1 data/theia_e3.dump
 ```
+
+If you are still getting that error, it means your Linux VM is still using the old version of `pg_restore` that was left behind in your system's PATH, even though PostgreSQL 17 is installed.
+
+To force Linux to use the brand new PostgreSQL 17 version of the tool, you just need to provide the **absolute path** to the executable. 
+
+Run this command instead:
+```bash
+/usr/lib/postgresql/17/bin/pg_restore -U postgres -d postgres -1 data/theia_e3.dump
+```
+
+*(Note: If you get a "command not found" for that specific path, you can find exactly where version 17 is installed by running `find /usr -name pg_restore 2>/dev/null`, and then use the path that has "17" in it).*
