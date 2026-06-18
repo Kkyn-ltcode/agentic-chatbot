@@ -49,3 +49,40 @@ python -m pidsmaker.main kairos THEIA_E3
 python -m pidsmaker.main threatrace THEIA_E3
 python -m pidsmaker.main magic THEIA_E3
 ```
+Viewed compose-postgres.yml:1-34
+
+This error means that the dataset was exported using **PostgreSQL 17**, but the default PostgreSQL installed on your Linux VM is an older version (like 12 or 14). Older versions of PostgreSQL cannot read database dumps created by newer versions.
+
+Since you are not using Docker, you need to manually upgrade your Linux VM to PostgreSQL 17. 
+
+Assuming you are on Ubuntu or Debian, run these exact commands in your terminal to install version 17:
+
+### 1. Add the official PostgreSQL 17 repository
+```bash
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+
+wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/trusted.gpg.d/pgdg.asc &>/dev/null
+
+sudo apt update
+```
+
+### 2. Install PostgreSQL 17
+First, remove the old version so it doesn't conflict:
+```bash
+sudo apt remove --purge postgresql postgresql-contrib -y
+```
+Now install version 17:
+```bash
+sudo apt install postgresql-17 postgresql-client-17 -y
+```
+
+### 3. Reset the Password and Restore
+Just like before, reset the password so PIDSMaker can connect:
+```bash
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'your_password';"
+```
+
+Now your `pg_restore` command will work perfectly! Try running it again:
+```bash
+pg_restore -U postgres -d postgres -1 data/theia_e3.dump
+```
