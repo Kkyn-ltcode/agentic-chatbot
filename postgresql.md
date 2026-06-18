@@ -13,15 +13,14 @@ sudo service postgresql start
 ```
 Set the password for the default `postgres` user (you'll need this in Step 4):
 ```bash
-sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'your_password';"
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD '12345678';"
 ```
 
 ### Step 2: Download & Restore the THEIA Dataset
 PIDSMaker provides a script to download the pre-processed database dump.
 ```bash
 # First download it (requires the Google Drive access token PIDSMaker provides)
-./download_datasets.sh theia_e3 <YOUR_ACCESS_TOKEN>
-
+./download_datasets.sh theia_e3 ya29.a0AT3oNZ_-vr-8q2KUX2AhZ_uiB_3AtYAZTX_B2kmg1fBZx5oK3EWeZkhHRhUZMospBTWZY4je3vjitmDpG2JS4DNHcoc8cho2fruhVDonGYhtmGke5Wtg97UQbWNATAO8k9ywUICQZbUmHPPt9rjPeuoh8vxijETOP4qW26NoaLPwJww5Xs31UTbSrva1-X6X-wAon60aCgYKAUMSARcSFQHGX2Mi3V8WrHaKQKG6RFPcWxdFaA0206
 # Restore the dump into your local PostgreSQL instance
 pg_restore -U postgres -d postgres -1 data/theia_e3.dump
 ```
