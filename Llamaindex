@@ -1,10 +1,1 @@
-gdown "https://drive.google.com/file/d/1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb/view?usp=drive_link"
-
-FILEID="1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb"
-
-CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${FILEID}" | \
-    sed -n 's/.*confirm=\([0-9A-Za-z_]*\).*/\1/p')
-
-curl -Lb /tmp/gcookie \
-    "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILEID}" \
-    -o output_file
+curl -L -c cookies.txt "https://drive.google.com/uc?export=download&id=1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > confirm.txt && curl -L -b cookies.txt -o ta1-cadets-e3-official.json.tar.gz "https://drive.google.com/uc?export=download&id=1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb&confirm=$(cat confirm.txt)" && rm -f cookies.txt confirm.txt
