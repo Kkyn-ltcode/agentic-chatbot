@@ -1,1 +1,1 @@
-curl -L -c cookies.txt "https://drive.google.com/uc?export=download&id=1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p' > confirm.txt && curl -L -b cookies.txt -o ta1-cadets-e3-official.json.tar.gz "https://drive.google.com/uc?export=download&id=1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb&confirm=$(cat confirm.txt)" && rm -f cookies.txt confirm.txt
+wandb artifact get kkyn/as/ta1-cadets-e3-official-1:v1
