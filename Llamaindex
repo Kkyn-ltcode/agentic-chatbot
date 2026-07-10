@@ -1,3 +1,1 @@
-gdown 1XLCEhf5DR8xw3S-Fimcj32IKnfzHFPJW
-gdown 1EycO23tEvZVnN3VxOHZ7gdbSCwqEZTI1
-gdown 1AcWrYiBmgAqp7DizclKJYYJJBQbnDMfb
+wget -c --no-check-certificate --content-disposition --load-cookies /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$(wget --quiet --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate 'https://drive.google.com/uc?export=download&id=1XLCEhf5DR8xw3S-Fimcj32IKnfzHFPJW' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')&id=1XLCEhf5DR8xw3S-Fimcj32IKnfzHFPJW" && rm -rf /tmp/cookies.txt
