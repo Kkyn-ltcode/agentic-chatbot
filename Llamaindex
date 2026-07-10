@@ -1,1 +1,1 @@
-wget -c --no-check-certificate --content-disposition "https://drive.google.com/uc?export=download&id=1XLCEhf5DR8xw3S-Fimcj32IKnfzHFPJW&confirm=t"
+confirm=$(curl -s -L "https://drive.google.com/uc?export=download&id=1XLCEhf5DR8xw3S-Fimcj32IKnfzHFPJW" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p'); curl -L -O "https://drive.google.com/uc?export=download&confirm=$confirm&id=1XLCEhf5DR8xw3S-Fimcj32IKnfzHFPJW"
