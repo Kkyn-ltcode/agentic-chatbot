@@ -1,1 +1,19 @@
-wandb artifact get kkyn/as/ta1-cadets-e3-official-1:v1
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+data_root = Path("...")  # your dataset root
+shard_ids = [...]        # the shards you're loading
+
+for sid in shard_ids:
+    n_raw = len(pd.read_parquet(
+        data_root / "labeled" / f"labeled_shard{sid}.parquet",
+        columns=["timestamp_nanos"],  # cheap, single column
+    ))
+    n_base = np.load(data_root / "features_norm" / f"thyne_shard{sid}.npz")["X"].shape[0]
+
+    enriched_path = data_root / "labeled" / f"enriched_shard{sid}.npz"
+    n_enr = np.load(enriched_path)["features"].shape[0] if enriched_path.exists() else None
+
+    flag = "  <-- MISMATCH" if (n_enr is not None and n_base != n_enr) else ""
+    print(f"shard {sid:>3}: raw={n_raw:,}  base={n_base:,}  enriched={n_enr}{flag}")
